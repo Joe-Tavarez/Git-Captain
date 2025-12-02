@@ -1,0 +1,258 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Git-Captain Lambda Function for S3 Upload Logging to CloudWatch'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: git-captain
+    Description: Project name for resource naming
+
+  Environment:
+    Type: String
+    Default: prod
+    Description: Environment name
+
+  S3BucketName:
+    Type: String
+    Description: Name of the S3 bucket to monitor for uploads
+    Default: git-captain-logs-bucket
+
+Resources:
+  # S3 Bucket for logs and static assets
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldLogs
+            Status: Enabled
+            ExpirationInDays: 90
+            Prefix: logs/
+      Tags:
+        - Key: Name
+          Value: !Ref S3BucketName
+
+  # CloudWatch Log Group for Lambda function
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ProjectName}-${Environment}-s3-logger'
+      RetentionInDays: 30
+
+  # IAM Role for Lambda function
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-lambda-s3-logger-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3ReadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub '${S3Bucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !GetAtt S3Bucket.Arn
+        - PolicyName: CloudWatchLogsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/s3-uploads/*'
+
+  # Lambda Function for S3 Upload Logging
+  S3UploadLoggerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-s3-upload-logger'
+      Description: Logs S3 file uploads to CloudWatch
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          LOG_GROUP_NAME: /aws/s3-uploads/git-captain
+          PROJECT_NAME: !Ref ProjectName
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from datetime import datetime
+          from urllib.parse import unquote_plus
+
+          logs_client = boto3.client('logs')
+          s3_client = boto3.client('s3')
+
+          LOG_GROUP_NAME = os.environ.get('LOG_GROUP_NAME', '/aws/s3-uploads/git-captain')
+          LOG_STREAM_NAME = datetime.now().strftime('%Y/%m/%d')
+
+          def ensure_log_stream():
+              """Ensure CloudWatch log group and stream exist"""
+              try:
+                  logs_client.create_log_group(logGroupName=LOG_GROUP_NAME)
+              except logs_client.exceptions.ResourceAlreadyExistsException:
+                  pass
+              
+              try:
+                  logs_client.create_log_stream(
+                      logGroupName=LOG_GROUP_NAME,
+                      logStreamName=LOG_STREAM_NAME
+                  )
+              except logs_client.exceptions.ResourceAlreadyExistsException:
+                  pass
+
+          def lambda_handler(event, context):
+              """
+              Lambda handler for S3 events
+              Logs file upload details to CloudWatch
+              """
+              print(f"Received event: {json.dumps(event)}")
+              
+              # Ensure log stream exists
+              ensure_log_stream()
+              
+              log_events = []
+              
+              for record in event.get('Records', []):
+                  try:
+                      # Extract S3 event details
+                      event_name = record['eventName']
+                      event_time = record['eventTime']
+                      bucket_name = record['s3']['bucket']['name']
+                      object_key = unquote_plus(record['s3']['object']['key'])
+                      object_size = record['s3']['object'].get('size', 0)
+                      
+                      # Get additional object metadata
+                      try:
+                          response = s3_client.head_object(Bucket=bucket_name, Key=object_key)
+                          content_type = response.get('ContentType', 'unknown')
+                          last_modified = response.get('LastModified', '').isoformat() if response.get('LastModified') else 'unknown'
+                      except Exception as e:
+                          print(f"Error getting object metadata: {str(e)}")
+                          content_type = 'unknown'
+                          last_modified = 'unknown'
+                      
+                      # Create log message
+                      log_message = {
+                          'timestamp': event_time,
+                          'event_type': event_name,
+                          'bucket': bucket_name,
+                          'key': object_key,
+                          'size_bytes': object_size,
+                          'size_mb': round(object_size / (1024 * 1024), 2),
+                          'content_type': content_type,
+                          'last_modified': last_modified
+                      }
+                      
+                      print(f"S3 Upload Logged: {json.dumps(log_message)}")
+                      
+                      # Add to CloudWatch log events
+                      log_events.append({
+                          'timestamp': int(datetime.now().timestamp() * 1000),
+                          'message': json.dumps(log_message)
+                      })
+                      
+                  except Exception as e:
+                      print(f"Error processing record: {str(e)}")
+                      continue
+              
+              # Write to CloudWatch Logs
+              if log_events:
+                  try:
+                      logs_client.put_log_events(
+                          logGroupName=LOG_GROUP_NAME,
+                          logStreamName=LOG_STREAM_NAME,
+                          logEvents=log_events
+                      )
+                  except Exception as e:
+                      print(f"Error writing to CloudWatch: {str(e)}")
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps(f'Processed {len(log_events)} S3 upload events')
+              }
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-s3-logger'
+
+  # Permission for S3 to invoke Lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref S3UploadLoggerLambda
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !GetAtt S3Bucket.Arn
+
+  # CloudWatch Log Group for S3 upload logs
+  S3UploadLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/s3-uploads/git-captain
+      RetentionInDays: 60
+
+Outputs:
+  S3BucketName:
+    Description: Name of the S3 bucket
+    Value: !Ref S3Bucket
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-s3-bucket'
+
+  S3BucketArn:
+    Description: ARN of the S3 bucket
+    Value: !GetAtt S3Bucket.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-s3-bucket-arn'
+
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt S3UploadLoggerLambda.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-lambda-arn'
+
+  LambdaFunctionName:
+    Description: Name of the Lambda function
+    Value: !Ref S3UploadLoggerLambda
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-lambda-name'
+
+  S3UploadLogGroupName:
+    Description: CloudWatch Log Group for S3 uploads
+    Value: !Ref S3UploadLogGroup
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-s3-upload-log-group'

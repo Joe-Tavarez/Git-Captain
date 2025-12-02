@@ -1,0 +1,353 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Git-Captain EC2 Auto Scaling with Application Load Balancer'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: git-captain
+    Description: Project name for resource naming
+
+  Environment:
+    Type: String
+    Default: prod
+    Description: Environment name
+
+  VpcId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /git-captain/infrastructure/vpc-id
+    Description: VPC ID from Terraform
+
+  PublicSubnetIds:
+    Type: AWS::SSM::Parameter::Value<List<String>>
+    Default: /git-captain/infrastructure/public-subnet-ids
+    Description: Public subnet IDs for ALB
+
+  PrivateSubnetIds:
+    Type: AWS::SSM::Parameter::Value<List<String>>
+    Default: /git-captain/infrastructure/private-subnet-ids
+    Description: Private subnet IDs for EC2 instances
+
+  ALBSecurityGroupId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /git-captain/infrastructure/alb-security-group-id
+    Description: Security Group ID for ALB
+
+  EC2SecurityGroupId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /git-captain/infrastructure/ec2-security-group-id
+    Description: Security Group ID for EC2 instances
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+
+  KeyName:
+    Type: String
+    Description: EC2 Key Pair for SSH access (optional)
+    Default: ''
+
+  MinSize:
+    Type: Number
+    Default: 2
+    Description: Minimum number of EC2 instances
+
+  MaxSize:
+    Type: Number
+    Default: 6
+    Description: Maximum number of EC2 instances
+
+  DesiredCapacity:
+    Type: Number
+    Default: 2
+    Description: Desired number of EC2 instances
+
+  ACMCertificateArn:
+    Type: String
+    Description: ARN of ACM certificate for HTTPS (leave empty to create self-signed)
+    Default: ''
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, '']]
+  HasACMCert: !Not [!Equals [!Ref ACMCertificateArn, '']]
+
+Resources:
+  # IAM Role for EC2 Instances
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-ec2-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: GitCaptainEC2Policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:git-captain/*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::git-captain-ssl-certs/*'
+                  - !Sub 'arn:aws:s3:::git-captain-static-assets/*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/*'
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${ProjectName}-${Environment}-ec2-profile'
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # Launch Template for EC2 Instances
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${ProjectName}-${Environment}-launch-template'
+      LaunchTemplateData:
+        ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+        InstanceType: !Ref InstanceType
+        KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroupId
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -e
+            exec > >(tee /var/log/user-data.log)
+            exec 2>&1
+
+            echo "Starting Git-Captain Bootstrap - $(date)"
+
+            # Update system
+            yum update -y
+
+            # Install Node.js 18.x
+            curl -sL https://rpm.nodesource.com/setup_18.x | bash -
+            yum install -y nodejs git jq
+
+            # Install PM2
+            npm install -g pm2
+
+            # Create application directory
+            mkdir -p /opt/git-captain
+            cd /opt/git-captain
+
+            # Clone repository
+            git clone https://github.com/Joe-Tavarez/Git-Captain.git .
+
+            # Install dependencies
+            npm install --production
+
+            # Retrieve secrets from AWS Secrets Manager
+            REGION=$(ec2-metadata --availability-zone | sed 's/.*placement: \(.*\).$/\1/' | sed 's/.$//')
+            SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id git-captain/prod --region $REGION --query SecretString --output text)
+            echo "$SECRET_JSON" | jq -r 'to_entries|map("\(.key)=\(.value)")|.[]' > /opt/git-captain/.env
+
+            # Retrieve SSL certificates if available
+            aws s3 cp s3://git-captain-ssl-certs/theKey.key /opt/git-captain/controllers/theKey.key 2>/dev/null || echo "No SSL cert"
+            aws s3 cp s3://git-captain-ssl-certs/theCert.cert /opt/git-captain/controllers/theCert.cert 2>/dev/null || echo "No SSL cert"
+
+            # Update paths in .env
+            sed -i 's|privateKeyPath=.*|privateKeyPath=/opt/git-captain/controllers/theKey.key|g' /opt/git-captain/.env
+            sed -i 's|certificatePath=.*|certificatePath=/opt/git-captain/controllers/theCert.cert|g' /opt/git-captain/.env
+
+            # Setup CloudWatch Logs
+            yum install -y amazon-cloudwatch-agent
+            cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json <<'EOFCW'
+            {
+              "logs": {
+                "logs_collected": {
+                  "files": {
+                    "collect_list": [
+                      {
+                        "file_path": "/opt/git-captain/logs/application-*.log",
+                        "log_group_name": "/aws/ec2/git-captain/application",
+                        "log_stream_name": "{instance_id}",
+                        "timezone": "UTC"
+                      },
+                      {
+                        "file_path": "/opt/git-captain/logs/error-*.log",
+                        "log_group_name": "/aws/ec2/git-captain/errors",
+                        "log_stream_name": "{instance_id}",
+                        "timezone": "UTC"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+            EOFCW
+
+            /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json
+
+            # Create logs directory
+            mkdir -p /opt/git-captain/logs
+            chown -R ec2-user:ec2-user /opt/git-captain
+
+            # Start application
+            cd /opt/git-captain/controllers
+            su - ec2-user -c "cd /opt/git-captain/controllers && pm2 start server.js --name git-captain"
+            su - ec2-user -c "pm2 save"
+
+            # Setup PM2 to start on boot
+            env PATH=$PATH:/usr/bin pm2 startup systemd -u ec2-user --hp /home/ec2-user
+            systemctl enable pm2-ec2-user
+
+            echo "Bootstrap complete - $(date)"
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub '${ProjectName}-${Environment}-instance'
+              - Key: Project
+                Value: !Ref ProjectName
+              - Key: Environment
+                Value: !Ref Environment
+
+  # Application Load Balancer
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-alb'
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Subnets: !Ref PublicSubnetIds
+      SecurityGroups:
+        - !Ref ALBSecurityGroupId
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-alb'
+
+  # Target Group for EC2 Instances
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-tg'
+      Port: 3000
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      HealthCheckEnabled: true
+      HealthCheckPath: /gitCaptain/checkGitCaptainStatus
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      TargetType: instance
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-tg'
+
+  # HTTPS Listener (if ACM certificate provided)
+  HTTPSListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasACMCert
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref ACMCertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # HTTP Listener (redirect to HTTPS or forward)
+  HTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # Auto Scaling Group
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub '${ProjectName}-${Environment}-asg'
+      VPCZoneIdentifier: !Ref PrivateSubnetIds
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: !Ref MinSize
+      MaxSize: !Ref MaxSize
+      DesiredCapacity: !Ref DesiredCapacity
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      TargetGroupARNs:
+        - !Ref TargetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-asg-instance'
+          PropagateAtLaunch: true
+        - Key: Project
+          Value: !Ref ProjectName
+          PropagateAtLaunch: true
+        - Key: Environment
+          Value: !Ref Environment
+          PropagateAtLaunch: true
+
+  # Auto Scaling Policy - Scale Out (CPU > 70%)
+  ScaleOutPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 70.0
+
+Outputs:
+  LoadBalancerDNS:
+    Description: DNS name of the Application Load Balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-alb-dns'
+
+  LoadBalancerArn:
+    Description: ARN of the Application Load Balancer
+    Value: !Ref ApplicationLoadBalancer
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-alb-arn'
+
+  TargetGroupArn:
+    Description: ARN of the Target Group
+    Value: !Ref TargetGroup
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-tg-arn'
+
+  AutoScalingGroupName:
+    Description: Name of the Auto Scaling Group
+    Value: !Ref AutoScalingGroup
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-asg-name'

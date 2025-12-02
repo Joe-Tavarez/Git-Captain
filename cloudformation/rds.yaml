@@ -1,0 +1,165 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Git-Captain RDS PostgreSQL Database for audit logs and session data'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: git-captain
+    Description: Project name for resource naming
+
+  Environment:
+    Type: String
+    Default: prod
+    Description: Environment name
+
+  VpcId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /git-captain/infrastructure/vpc-id
+    Description: VPC ID from Terraform
+
+  PrivateSubnetIds:
+    Type: AWS::SSM::Parameter::Value<List<String>>
+    Default: /git-captain/infrastructure/private-subnet-ids
+    Description: Private subnet IDs for RDS
+
+  RDSSecurityGroupId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /git-captain/infrastructure/rds-security-group-id
+    Description: Security Group ID for RDS
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    Description: RDS instance class
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+
+  DBName:
+    Type: String
+    Default: gitcaptain
+    Description: Database name
+
+  DBUsername:
+    Type: String
+    Default: dbadmin
+    Description: Database master username
+    NoEcho: true
+
+  DBPassword:
+    Type: String
+    Description: Database master password
+    Default: TempPassword123456
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 41
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: Must contain only alphanumeric characters
+
+  AllocatedStorage:
+    Type: Number
+    Default: 20
+    Description: Allocated storage in GB
+    MinValue: 20
+    MaxValue: 100
+
+  BackupRetentionPeriod:
+    Type: Number
+    Default: 1
+    Description: Number of days to retain automated backups (1 for free tier)
+    MinValue: 1
+    MaxValue: 35
+
+Resources:
+  # DB Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub '${ProjectName}-${Environment}-db-subnet-group'
+      DBSubnetGroupDescription: Subnet group for Git-Captain RDS
+      SubnetIds: !Ref PrivateSubnetIds
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-db-subnet-group'
+
+  # RDS PostgreSQL Instance
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub '${ProjectName}-${Environment}-db'
+      DBName: !Ref DBName
+      Engine: postgres
+      EngineVersion: '15'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref AllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroupId
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      MultiAZ: false  # Set to true for production high availability
+      PubliclyAccessible: false
+      BackupRetentionPeriod: !Ref BackupRetentionPeriod
+      PreferredBackupWindow: '03:00-04:00'
+      PreferredMaintenanceWindow: 'sun:04:00-sun:05:00'
+      EnableCloudwatchLogsExports:
+        - postgresql
+      DeletionProtection: false  # Set to true for production
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-db'
+
+  # Store database credentials in Secrets Manager
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${ProjectName}/database/credentials'
+      Description: RDS database credentials for Git-Captain
+      SecretString: !Sub |
+        {
+          "username": "${DBUsername}",
+          "password": "${DBPassword}",
+          "engine": "postgres",
+          "host": "${DBInstance.Endpoint.Address}",
+          "port": ${DBInstance.Endpoint.Port},
+          "dbname": "${DBName}",
+          "dbInstanceIdentifier": "${DBInstance}"
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-db-secret'
+
+Outputs:
+  DBInstanceIdentifier:
+    Description: RDS Instance Identifier
+    Value: !Ref DBInstance
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-db-id'
+
+  DBEndpointAddress:
+    Description: RDS Endpoint Address
+    Value: !GetAtt DBInstance.Endpoint.Address
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-db-endpoint'
+
+  DBEndpointPort:
+    Description: RDS Endpoint Port
+    Value: !GetAtt DBInstance.Endpoint.Port
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-db-port'
+
+  DBName:
+    Description: Database Name
+    Value: !Ref DBName
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-db-name'
+
+  DBSecretArn:
+    Description: ARN of the Secrets Manager secret containing DB credentials
+    Value: !Ref DBSecret
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-db-secret-arn'

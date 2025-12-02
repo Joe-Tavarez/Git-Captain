@@ -173,3 +173,37 @@ fabric.properties
 # Exclude the following files from being committed
 *.cert
 *.key
+
+### AWS and Terraform ###
+# Terraform state files
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Terraform variable files (may contain sensitive data)
+terraform.tfvars
+*.auto.tfvars
+
+# AWS credentials and sensitive files
+*.pem
+*.ppk
+aws-credentials.json
+
+# CloudFormation outputs
+cloudformation-outputs.json
+
+# Python virtual environments (for boto3 scripts)
+venv/
+env/
+*.pyc
+__pycache__/
+
+# Lambda deployment packages
+lambda-functions/**/*.zip
+
+# Local environment and secrets
+.env.local
+.env.production
+secrets.json

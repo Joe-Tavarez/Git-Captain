@@ -1,0 +1,212 @@
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'terraform/**'
+      - 'cloudformation/**'
+      - '.github/workflows/deploy-infrastructure.yml'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-2
+  TERRAFORM_VERSION: 1.5.0
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform:
+    name: Deploy Terraform Infrastructure
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Format Check
+        working-directory: ./terraform
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: ./terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: ./terraform
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: ./terraform
+        if: github.ref == 'refs/heads/master'
+        run: terraform apply -auto-approve tfplan
+
+      - name: Output Terraform Values
+        working-directory: ./terraform
+        run: terraform output -json > ../terraform-outputs.json
+
+      - name: Upload Terraform Outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs
+          path: terraform-outputs.json
+
+  cloudformation:
+    name: Deploy CloudFormation Stacks
+    runs-on: ubuntu-latest
+    needs: terraform
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download Terraform Outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-outputs
+
+      - name: Deploy RDS Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/rds.yaml \
+            --stack-name git-captain-rds \
+            --parameter-overrides \
+              DBUsername=${{ secrets.DB_USERNAME }} \
+              DBPassword=${{ secrets.DB_PASSWORD }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy Lambda Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/lambda-s3-logging.yaml \
+            --stack-name git-captain-lambda \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy EC2 Auto Scaling Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/ec2-alb-autoscaling.yaml \
+            --stack-name git-captain-ec2-asg \
+            --parameter-overrides \
+              KeyName=${{ secrets.EC2_KEY_NAME }} \
+              ACMCertificateArn=${{ secrets.ACM_CERTIFICATE_ARN }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Get ALB DNS Name
+        run: |
+          ALB_DNS=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-ec2-asg \
+            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          echo "Application Load Balancer DNS: $ALB_DNS"
+          echo "ALB_DNS=$ALB_DNS" >> $GITHUB_ENV
+
+      - name: Deploy Monitoring Stack
+        run: |
+          # Get ALB and ASG details from previous stack
+          ALB_NAME=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-ec2-asg \
+            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerArn`].OutputValue' \
+            --output text | cut -d'/' -f2-4)
+          
+          TG_NAME=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-ec2-asg \
+            --query 'Stacks[0].Outputs[?OutputKey==`TargetGroupArn`].OutputValue' \
+            --output text | cut -d':' -f6)
+          
+          ASG_NAME=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-ec2-asg \
+            --query 'Stacks[0].Outputs[?OutputKey==`AutoScalingGroupName`].OutputValue' \
+            --output text)
+          
+          aws cloudformation deploy \
+            --template-file cloudformation/cloudwatch-monitoring.yaml \
+            --stack-name git-captain-monitoring \
+            --parameter-overrides \
+              EmailAddress=${{ secrets.ALERT_EMAIL }} \
+              LoadBalancerFullName=$ALB_NAME \
+              TargetGroupFullName=$TG_NAME \
+              AutoScalingGroupName=$ASG_NAME \
+            --capabilities CAPABILITY_IAM \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy WAF Stack
+        run: |
+          ALB_ARN=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-ec2-asg \
+            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerArn`].OutputValue' \
+            --output text)
+          
+          aws cloudformation deploy \
+            --template-file cloudformation/waf.yaml \
+            --stack-name git-captain-waf \
+            --parameter-overrides \
+              LoadBalancerArn=$ALB_ARN \
+            --capabilities CAPABILITY_IAM \
+            --region ${{ env.AWS_REGION }}
+
+  summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [terraform, cloudformation]
+    if: always()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get Deployment Status
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get ALB DNS
+          ALB_DNS=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-ec2-asg \
+            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
+            --output text 2>/dev/null || echo "Not deployed")
+          
+          echo "- **Application URL**: https://$ALB_DNS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment Time**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Stack Status" >> $GITHUB_STEP_SUMMARY
+          
+          for stack in git-captain-rds git-captain-lambda git-captain-ec2-asg git-captain-monitoring git-captain-waf; do
+            status=$(aws cloudformation describe-stacks --stack-name $stack --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_DEPLOYED")
+            echo "- $stack: $status" >> $GITHUB_STEP_SUMMARY
+          done

@@ -1,0 +1,199 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Git-Captain AWS WAF Rules for Application Load Balancer'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: git-captain
+    Description: Project name for resource naming
+
+  Environment:
+    Type: String
+    Default: prod
+    Description: Environment name
+
+  LoadBalancerArn:
+    Type: String
+    Description: ARN of the Application Load Balancer to protect
+
+  RateLimitPerIP:
+    Type: Number
+    Default: 2000
+    Description: Maximum requests per IP per 5 minutes
+    MinValue: 100
+    MaxValue: 20000
+
+Resources:
+  # WAF Web ACL
+  WebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-waf'
+      Scope: REGIONAL
+      Description: WAF rules to protect Git-Captain application
+      DefaultAction:
+        Allow: {}
+      Rules:
+        # Rate Limiting Rule
+        - Name: RateLimitRule
+          Priority: 1
+          Statement:
+            RateBasedStatement:
+              Limit: !Ref RateLimitPerIP
+              AggregateKeyType: IP
+          Action:
+            Block:
+              CustomResponse:
+                ResponseCode: 429
+                CustomResponseBodyKey: RateLimitResponse
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: RateLimitRule
+
+        # AWS Managed Rules - Core Rule Set
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 2
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWSManagedRulesCommonRuleSetMetric
+
+        # AWS Managed Rules - Known Bad Inputs
+        - Name: AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 3
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWSManagedRulesKnownBadInputsRuleSetMetric
+
+        # SQL Injection Protection
+        - Name: SQLInjectionProtection
+          Priority: 4
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesSQLiRuleSet
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: SQLInjectionProtectionMetric
+
+        # Block Common Attack Patterns
+        - Name: BlockCommonAttacks
+          Priority: 5
+          Statement:
+            OrStatement:
+              Statements:
+                - ByteMatchStatement:
+                    SearchString: '../'
+                    FieldToMatch:
+                      UriPath: {}
+                    TextTransformations:
+                      - Priority: 0
+                        Type: URL_DECODE
+                    PositionalConstraint: CONTAINS
+                - ByteMatchStatement:
+                    SearchString: '<script'
+                    FieldToMatch:
+                      Body: {}
+                    TextTransformations:
+                      - Priority: 0
+                        Type: LOWERCASE
+                    PositionalConstraint: CONTAINS
+          Action:
+            Block: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: BlockCommonAttacksMetric
+
+      CustomResponseBodies:
+        RateLimitResponse:
+          ContentType: APPLICATION_JSON
+          Content: '{"error": "Rate limit exceeded. Please try again later."}'
+
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub '${ProjectName}WebACL'
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-waf'
+
+  # Associate WAF with ALB
+  WebACLAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !Ref LoadBalancerArn
+      WebACLArn: !GetAtt WebACL.Arn
+
+  # CloudWatch Log Group for WAF logs
+  WAFLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/wafv2/${ProjectName}-${Environment}'
+      RetentionInDays: 30
+
+  # WAF Logging Configuration
+  WAFLoggingConfiguration:
+    Type: AWS::WAFv2::LoggingConfiguration
+    Properties:
+      ResourceArn: !GetAtt WebACL.Arn
+      LogDestinationConfigs:
+        - !GetAtt WAFLogGroup.Arn
+
+  # CloudWatch Alarm for WAF Blocks
+  WAFBlockAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-waf-high-blocks'
+      AlarmDescription: Alert when WAF blocks too many requests
+      MetricName: BlockedRequests
+      Namespace: AWS/WAFV2
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 100
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Rule
+          Value: ALL
+        - Name: WebACL
+          Value: !Sub '${ProjectName}-${Environment}-waf'
+        - Name: Region
+          Value: !Ref 'AWS::Region'
+
+Outputs:
+  WebACLId:
+    Description: ID of the WAF Web ACL
+    Value: !GetAtt WebACL.Id
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-waf-id'
+
+  WebACLArn:
+    Description: ARN of the WAF Web ACL
+    Value: !GetAtt WebACL.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-waf-arn'
+
+  WAFLogGroupName:
+    Description: CloudWatch Log Group for WAF logs
+    Value: !Ref WAFLogGroup
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-waf-log-group'

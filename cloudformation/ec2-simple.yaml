@@ -1,0 +1,195 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Git-Captain Simple EC2 Instance (No Load Balancer)'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: git-captain
+    Description: Project name for resource naming
+
+  Environment:
+    Type: String
+    Default: prod
+    Description: Environment name
+
+  VpcId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /git-captain/infrastructure/vpc-id
+    Description: VPC ID from Terraform
+
+  PublicSubnetIds:
+    Type: AWS::SSM::Parameter::Value<List<String>>
+    Default: /git-captain/infrastructure/public-subnet-ids
+    Description: Public subnet IDs for EC2
+
+  EC2SecurityGroupId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /git-captain/infrastructure/ec2-security-group-id
+    Description: Security Group ID for EC2 instances
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type
+
+  KeyName:
+    Type: String
+    Description: EC2 Key Pair for SSH access (optional)
+    Default: ''
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, '']]
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      AMI: ami-0c02fb55b34c3b550  # Amazon Linux 2023
+    us-east-2:
+      AMI: ami-0490fddec0cbeb88b  # Amazon Linux 2023
+    us-west-1:
+      AMI: ami-038bba9a164eb3dc1  # Amazon Linux 2023
+    us-west-2:
+      AMI: ami-08d8ac128e0a1b91c  # Amazon Linux 2023
+
+Resources:
+  # IAM Role for EC2 Instance
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-ec2-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: GitCaptainEC2Policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:git-captain/*'
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/git-captain/*'
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${ProjectName}-${Environment}-ec2-profile'
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # Security Group for direct HTTP access
+  WebAccessSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ProjectName}-${Environment}-web-access'
+      GroupDescription: Allow HTTP access to EC2 instance
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTP from anywhere
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+          Description: Allow Node.js app port from anywhere
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-web-access'
+
+  # EC2 Instance
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+      SubnetId: !Select [0, !Ref PublicSubnetIds]
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroupId
+        - !Ref WebAccessSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-instance'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          
+          # Update system
+          dnf update -y
+          
+          # Install Node.js 18.x (AL2023 uses dnf)
+          dnf install -y nodejs npm git
+          
+          # Install PM2 globally
+          npm install -g pm2
+          
+          # Create app directory
+          mkdir -p /opt/git-captain
+          cd /opt/git-captain
+          
+          # Clone repository (placeholder - will need actual repo URL)
+          # git clone https://github.com/your-repo/git-captain.git .
+          
+          # For now, create a simple test server
+          cat > server.js << 'EOF'
+          const http = require('http');
+          const server = http.createServer((req, res) => {
+            res.writeHead(200, {'Content-Type': 'text/html'});
+            res.end('<h1>Git-Captain is Running!</h1><p>EC2 instance deployed successfully with Amazon Linux 2023.</p>');
+          });
+          server.listen(3000, () => {
+            console.log('Server running on port 3000');
+          });
+          EOF
+          
+          # Start with PM2
+          pm2 start server.js --name git-captain
+          pm2 startup systemd -u root --hp /root
+          pm2 save
+          
+          # Install CloudWatch agent
+          wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+          rpm -U ./amazon-cloudwatch-agent.rpm
+          
+          echo "Git-Captain EC2 instance setup complete!"
+
+Outputs:
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref EC2Instance
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-instance-id'
+
+  InstancePublicIP:
+    Description: Public IP address of the EC2 instance
+    Value: !GetAtt EC2Instance.PublicIp
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-instance-public-ip'
+
+  InstancePublicDNS:
+    Description: Public DNS name of the EC2 instance
+    Value: !GetAtt EC2Instance.PublicDnsName
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-instance-public-dns'
+
+  ApplicationURL:
+    Description: URL to access the application
+    Value: !Sub 'http://${EC2Instance.PublicDnsName}:3000'
