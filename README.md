@@ -162,43 +162,9 @@ Git-Captain implements enterprise-grade security measures:
 
 ## 🏗️ Architecture Overview
 
-Git-Captain v2.0 features a modern, secure architecture deployed on AWS infrastructure:
+Git-Captain v2.0 features a modern, secure architecture deployed on AWS infrastructure.
 
-```mermaid
-graph TB
-    User[👤 User] --> Browser[🌐 Browser]
-    
-    subgraph "AWS Cloud"
-        Browser -->|HTTPS| IGW[🌐 Internet Gateway]
-        IGW --> SG[🛡️ Security Groups]
-        SG --> EC2[🖥️ EC2 Instance<br/>Amazon Linux 2023]
-        
-        EC2 --> App[🚀 Git-Captain App<br/>Node.js 18 + Express<br/>PM2 Managed]
-        
-        App --> Security[🛡️ Security Layer<br/>Helmet + CORS + Rate Limiting]
-        App --> Auth[🔐 GitHub OAuth<br/>Authentication]
-        
-        App --> NAT[🔄 NAT Gateway]
-        NAT --> API[🐙 GitHub API<br/>Repository Operations]
-        
-        App --> RDS[(💾 RDS PostgreSQL<br/>Private Subnet)]
-        App --> CloudWatch[📊 CloudWatch<br/>Logs & Metrics]
-        
-        Lambda[⚡ Lambda] --> S3[📦 S3 Logs]
-    end
-
-    classDef user fill:#e1f5fe
-    classDef aws fill:#ff9800
-    classDef app fill:#e8f5e8
-    classDef security fill:#fff3e0
-    classDef external fill:#fce4ec
-
-    class User,Browser user
-    class IGW,SG,EC2,NAT,RDS,CloudWatch,Lambda,S3 aws
-    class App app
-    class Security,Auth security
-    class API external
-```
+**[📊 View Architecture Diagram](docs/ARCHITECTURE.md#-high-level-architecture)**
 
 **Key Components:**
 - **AWS Infrastructure**: VPC with public/private subnets, EC2, RDS PostgreSQL, Lambda, CloudWatch
