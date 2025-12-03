@@ -4,6 +4,14 @@
 
 Git-Captain is a modernized Node.js web application that provides a secure interface for GitHub repository management with OAuth authentication and comprehensive security middleware.
 
+**🌐 AWS Deployment**: Git-Captain is deployed on AWS infrastructure. See [AWS Architecture Documentation](./aws/AWS_ARCHITECTURE.md) for detailed cloud deployment information.
+
+## 📍 Deployment Options
+
+- **☁️ AWS Cloud** (Current): EC2, RDS PostgreSQL, Lambda, VPC infrastructure
+- **🖥️ On-Premises**: Traditional server deployment with reverse proxy
+- **🐳 Docker**: Container-based deployment (future enhancement)
+
 ## 📊 High-Level Architecture
 
 ```mermaid
@@ -13,44 +21,68 @@ graph TB
         User[👤 User]
     end
 
-    subgraph "Infrastructure Layer"
-        Proxy[🔄 Reverse Proxy<br/>nginx/Apache/ALB<br/>Port 443]
+    subgraph "AWS Cloud - VPC 10.0.0.0/16"
+        subgraph "Public Subnet - us-east-2a/2b"
+            IGW[🌐 Internet Gateway]
+            EC2[🖥️ EC2 Instance<br/>Amazon Linux 2023<br/>t3.micro - Port 3000]
+        end
+        
+        subgraph "Private Subnet - us-east-2a/2b"
+            RDS[(💾 RDS PostgreSQL<br/>db.t3.micro<br/>Multi-AZ Ready)]
+            Lambda[⚡ Lambda Function<br/>S3 Logger<br/>Python 3.9]
+        end
+        
+        NAT[🔄 NAT Gateway<br/>Private → Internet]
+        SG[🛡️ Security Groups<br/>Port 3000, 443, 5432]
     end
 
-    subgraph "Application Layer"
-        App[🚀 Git-Captain Server<br/>Node.js + Express<br/>Port 3000]
+    subgraph "Application Layer - EC2"
+        App[🚀 Git-Captain Server<br/>Node.js 18 + Express<br/>PM2 Managed]
         
         subgraph "Security Middleware Stack"
             Helmet[🛡️ Helmet<br/>Security Headers]
             CORS[🔗 CORS<br/>Cross-Origin Resource Sharing]
-            RateLimit[⏱️ Rate Limiting<br/>Request throttling]
+            RateLimit[⏱️ Rate Limiting<br/>200/min, 300/5min]
             Validator[✅ Input Validation<br/>Schema validation]
             Auth[🔐 Authentication<br/>GitHub OAuth 2.0]
         end
     end
 
+    subgraph "AWS Services"
+        CloudWatch[📊 CloudWatch<br/>Logs & Metrics]
+        SSM[🔧 Systems Manager<br/>Remote Access]
+        S3[📦 S3 Buckets<br/>Logging Storage]
+    end
+
     subgraph "External Services"
         GitHub[🐙 GitHub API<br/>REST & GraphQL<br/>api.github.com]
-        DB[(💾 Data Storage<br/>File System<br/>Logs & Cache)]
     end
 
     User --> Browser
-    Browser --> Proxy
-    Proxy --> App
+    Browser -->|HTTPS| IGW
+    IGW --> SG
+    SG --> EC2
+    EC2 --> App
     App --> Helmet
     Helmet --> CORS
     CORS --> RateLimit
     RateLimit --> Validator
     Validator --> Auth
-    Auth --> GitHub
-    App --> DB
+    Auth -->|NAT Gateway| GitHub
+    App --> RDS
+    App --> CloudWatch
+    Lambda --> S3
+    EC2 --> SSM
 
     style User fill:#e1f5fe
     style Browser fill:#f3e5f5
-    style Proxy fill:#fff3e0
+    style EC2 fill:#ff9800
     style App fill:#e8f5e8
     style GitHub fill:#f1f8ff
-    style DB fill:#fce4ec
+    style RDS fill:#1976d2
+    style Lambda fill:#ffd54f
+    style CloudWatch fill:#4caf50
+    style S3 fill:#e91e63
 ```
 
 ## 🔧 Error Handling & Recovery Architecture
@@ -146,77 +178,106 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant B as Browser
-    participant P as Proxy
-    participant A as Git-Captain App
-    participant M as Middleware Stack
-    participant R as Router
-    participant G as GitHub API
+    participant U as 👤 User
+    participant B as 🌐 Browser
+    participant IGW as 🌐 Internet Gateway
+    participant SG as 🛡️ Security Group
+    participant EC2 as 🖥️ EC2 Instance
+    participant A as 🚀 Git-Captain App
+    participant M as 🔧 Middleware Stack
+    participant R as 🔀 Router
+    participant NAT as 🔄 NAT Gateway
+    participant G as 🐙 GitHub API
+    participant RDS as 💾 RDS PostgreSQL
+    participant CW as 📊 CloudWatch
 
-    Note over U,G: OAuth Authentication Flow
+    Note over U,CW: OAuth Authentication Flow (AWS)
     U->>B: Access Application
-    B->>P: HTTPS Request
-    P->>A: Forward to App
+    B->>IGW: HTTPS Request (Port 443/3000)
+    IGW->>SG: Route to VPC
+    SG->>EC2: Allow Port 3000
+    EC2->>A: PM2 Process
     A->>M: Security Middleware
     M->>A: Security Headers + CORS
+    A->>CW: Log Request
     A->>B: Redirect to GitHub OAuth
     B->>G: OAuth Authorization Request
     G->>B: Authorization Code
-    B->>A: POST /gitCaptain/getToken + code
+    B->>IGW: POST /gitCaptain/getToken + code
+    IGW->>EC2: Forward Request
+    EC2->>A: Handle Request
     A->>M: Rate Limit + Validation
     M->>R: Route to Token Handler
-    R->>G: Exchange Code for Token
-    G->>R: Access Token
+    R->>NAT: Route to Internet
+    NAT->>G: Exchange Code for Token
+    G->>NAT: Access Token
+    NAT->>R: Return Token
     R->>A: Success Response
+    A->>CW: Log Authentication
     A->>B: Token + User Data
 
-    Note over U,G: Branch Operations
+    Note over U,CW: Branch Operations (AWS)
     U->>B: Branch Create/Search/Delete
-    B->>A: POST /gitCaptain/{operation}
+    B->>IGW: POST /gitCaptain/{operation}
+    IGW->>SG: Security Check
+    SG->>EC2: Forward to App
+    EC2->>A: Handle Request
     A->>M: Security + Rate Limiting
     M->>M: Input Validation
     M->>R: Route to Handler
-    R->>G: GitHub API Call
-    G->>R: API Response
+    R->>NAT: Route to Internet
+    NAT->>G: GitHub API Call
+    G->>NAT: API Response
+    NAT->>R: Return Data
+    R->>RDS: Store/Query Data (Optional)
     R->>A: Process Response
-    A->>A: Log Operation
-    A->>B: JSON Response
+    A->>CW: Log Operation
+    A->>EC2: Response
+    EC2->>B: JSON Response
     B->>U: Display Result
 ```
 
 ## 🏢 Component Architecture
 
 ```mermaid
-graph LR
-    subgraph "Frontend Components"
-        Index[📄 index.html<br/>Landing Page]
-        Auth[🔐 authenticated.html<br/>OAuth Callback]
-        CSS[🎨 styles.css<br/>UI Styling]
-        Tools[🔧 tools.js<br/>API Interactions]
-        Branch[🌿 branchUtils.js<br/>Branch Operations]
-        Utils[⚙️ viewUtils.js<br/>UI Utilities]
-    end
+graph TB
+    subgraph "AWS Infrastructure"
+        subgraph "EC2 Instance - /opt/git-captain/"
+            subgraph "Frontend Components"
+                Index[📄 index.html<br/>Landing Page]
+                Auth[🔐 authenticated.html<br/>OAuth Callback]
+                CSS[🎨 styles.css<br/>UI Styling]
+                Tools[🔧 tools.js<br/>API Interactions]
+                Branch[🌿 branchUtils.js<br/>Branch Operations]
+                Utils[⚙️ viewUtils.js<br/>UI Utilities]
+            end
 
-    subgraph "Backend Controllers"
-        Server[🚀 server.js<br/>Main Application]
-        Config[⚙️ config.js<br/>Environment Config]
-        Middleware[🛡️ middleware.js<br/>Security Stack]
-        Validation[✅ validation.js<br/>Input Validation]
-        Logger[📝 logger.js<br/>Winston Logging]
-        HttpClient[🌐 httpClient.js<br/>Axios Wrapper]
-        Security[🔒 security.js<br/>Auth & Security]
+            subgraph "Backend Controllers"
+                Server[🚀 server.js<br/>Main Application<br/>PM2 Managed]
+                Config[⚙️ config.js<br/>Environment Config<br/>.env file]
+                Middleware[🛡️ middleware.js<br/>Security Stack]
+                Validation[✅ validation.js<br/>Input Validation]
+                Logger[📝 logger.js<br/>Winston Logging]
+                HttpClient[🌐 httpClient.js<br/>Axios Wrapper]
+                Security[🔒 security.js<br/>Auth & Security]
+            end
+            
+            subgraph "Infrastructure"
+                SSL[🔒 SSL Certificates<br/>theKey.key + theCert.cert]
+                Logs[📄 Log Files<br/>PM2 + Application Logs]
+                Static[📁 Static Assets<br/>/opt/git-captain/public/]
+            end
+        end
+        
+        RDS[(💾 RDS PostgreSQL<br/>Private Subnet<br/>Port 5432)]
+        Lambda[⚡ Lambda S3 Logger<br/>Python 3.9]
+        CloudWatch[📊 CloudWatch<br/>Logs & Metrics]
+        S3[📦 S3 Bucket<br/>Log Storage]
     end
-
+    
     subgraph "External Services"
         GitHubAPI[🐙 GitHub API<br/>Repository Management]
         OAuth[🔑 GitHub OAuth<br/>Authentication]
-    end
-
-    subgraph "Infrastructure"
-        SSL[🔒 SSL Certificates]
-        Logs[📄 Log Files]
-        Static[📁 Static Assets]
     end
 
     Index --> Server
@@ -235,18 +296,24 @@ graph LR
     Security --> OAuth
     
     Server --> SSL
+    Server --> RDS
     Logger --> Logs
+    Logs --> CloudWatch
     Server --> Static
+    Lambda --> S3
+    CloudWatch --> S3
 
     classDef frontend fill:#e3f2fd,stroke:#0277bd,stroke-width:2px
     classDef backend fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
     classDef external fill:#fce4ec,stroke:#c2185b,stroke-width:2px
     classDef infra fill:#f5f5f5,stroke:#616161,stroke-width:2px
+    classDef aws fill:#ff9800,stroke:#e65100,stroke-width:2px
 
     class Index,Auth,CSS,Tools,Branch,Utils frontend
     class Server,Config,Middleware,Validation,Logger,HttpClient,Security backend
     class GitHubAPI,OAuth external
     class SSL,Logs,Static infra
+    class RDS,Lambda,CloudWatch,S3 aws
 ```
 
 ## 🔧 Technology Stack
@@ -829,12 +896,15 @@ graph TB
 
 ## 📚 Related Documentation
 
+- **[☁️ AWS Architecture](./aws/AWS_ARCHITECTURE.md)** - AWS cloud deployment architecture
 - **[README.md](../README.md)** - Project overview and quick start
 - **[SETUP.md](../SETUP.md)** - Detailed setup instructions  
 - **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Production deployment guide
 - **[SECURITY.md](./SECURITY.md)** - Security best practices
 - **[MODULE_UPDATES.md](../MODULE_UPDATES.md)** - Modernization changelog
+- **[AWS Deployment Checklist](../AWS_DEPLOYMENT_CHECKLIST.md)** - AWS deployment guide
+- **[AWS Quick Reference](../AWS_QUICK_REFERENCE.md)** - AWS resource reference
 
 ---
 
-*This architecture document represents Git-Captain v2.0 following the comprehensive modernization and security improvements completed in 2024.*
+*This architecture document represents Git-Captain v2.0 following the comprehensive modernization and security improvements completed in 2024, with AWS cloud deployment added December 2025.*

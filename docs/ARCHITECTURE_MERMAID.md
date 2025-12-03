@@ -9,16 +9,33 @@ graph TB
         UI[📱 User Interface]
     end
     
-    subgraph "Network Layer"
-        Proxy[🔄 Reverse Proxy - nginx/Apache/ALB]
-        SSL[🔒 SSL/TLS]
+    subgraph "AWS Cloud Infrastructure"
+        subgraph "VPC 10.0.0.0/16 - us-east-2"
+            IGW[🌐 Internet Gateway]
+            
+            subgraph "Public Subnets"
+                EC2[🖥️ EC2 Instance<br/>Amazon Linux 2023<br/>t3.micro]
+                NAT[🔄 NAT Gateway]
+            end
+            
+            subgraph "Private Subnets"
+                RDS[(💾 RDS PostgreSQL 15<br/>db.t3.micro)]
+                Lambda[⚡ Lambda S3 Logger<br/>Python 3.9]
+            end
+            
+            SG[🛡️ Security Groups<br/>Web, DB, Lambda]
+        end
+        
+        CloudWatch[📊 CloudWatch<br/>Logs & Metrics]
+        S3[📦 S3 Bucket<br/>Log Storage]
+        SSM[🔧 Systems Manager]
     end
     
-    subgraph "Application Layer"
-        App[⚙️ Node.js Application - Port 3000]
+    subgraph "Application Layer - EC2"
+        App[⚙️ Node.js Application<br/>Port 3000<br/>PM2 Managed]
         
         subgraph "Security Middleware"
-            Rate[🚦 Rate Limiter - 200/min, 300/5min]
+            Rate[🚦 Rate Limiter<br/>200/min, 300/5min]
             CORS[🌐 CORS Protection]
             Helmet[🛡️ Security Headers]
             Validation[✅ Input Validation]
@@ -35,7 +52,7 @@ graph TB
         subgraph "Infrastructure"
             HTTP[🌐 HTTP Client<br/>Axios]
             Logger[📝 Winston Logger]
-            Config[⚙️ Configuration]
+            Config[⚙️ Configuration<br/>.env]
             Middleware[🔧 Middleware Stack]
         end
     end
@@ -45,9 +62,10 @@ graph TB
         OAuth[🔑 GitHub OAuth]
     end
     
-    Browser --> Proxy
-    Proxy --> SSL
-    SSL --> App
+    Browser --> IGW
+    IGW --> SG
+    SG --> EC2
+    EC2 --> App
     App --> Rate
     Rate --> CORS
     CORS --> Helmet
@@ -60,18 +78,26 @@ graph TB
     Auth --> HTTP
     Branch --> HTTP
     PR --> HTTP
-    HTTP --> GitHub
-    HTTP --> OAuth
+    HTTP --> NAT
+    NAT --> GitHub
+    NAT --> OAuth
+    App --> RDS
+    Logger --> CloudWatch
+    CloudWatch --> S3
+    Lambda --> S3
+    EC2 --> SSM
     
     classDef client fill:#e1f5fe
     classDef security fill:#fff3e0
     classDef core fill:#f3e5f5
     classDef external fill:#e8f5e8
+    classDef aws fill:#ff9800
     
     class Browser,UI client
     class Rate,CORS,Helmet,Validation security
     class Router,Auth,Branch,PR,Static,HTTP,Logger,Config,Middleware core
     class GitHub,OAuth external
+    class EC2,RDS,Lambda,CloudWatch,S3,NAT,IGW,SG,SSM aws
 ```
 
 ## 🔄 Request Flow Architecture
@@ -80,23 +106,35 @@ graph TB
 sequenceDiagram
     participant U as 👤 User
     participant B as 🌐 Browser
+    participant IGW as 🌐 Internet Gateway
+    participant SG as 🛡️ Security Groups
+    participant EC2 as 🖥️ EC2 Instance
     participant S as 🛡️ Security Layer
     participant A as ⚙️ Application
+    participant NAT as 🔄 NAT Gateway
     participant G as 🐙 GitHub API
+    participant CW as 📊 CloudWatch
     
     U->>B: Click "Search Branches"
-    B->>S: HTTPS Request
+    B->>IGW: HTTPS Request (Port 3000)
+    IGW->>SG: Route to VPC
+    SG->>EC2: Allow Port 3000
+    EC2->>S: PM2 → Node.js App
     S->>S: Rate Limiting Check
     S->>S: CORS Validation
     S->>S: Security Headers
     S->>S: Input Validation
     S->>A: Validated Request
     A->>A: Route to Handler
-    A->>G: GitHub API Call
-    G-->>A: API Response
+    A->>NAT: Forward Request
+    NAT->>G: GitHub API Call
+    G-->>NAT: API Response
+    NAT-->>A: Return Data
     A->>A: Format Response
+    A->>CW: Log Operation
     A-->>S: JSON Response
-    S-->>B: Secure Response
+    S-->>EC2: Send Response
+    EC2-->>B: Secure Response
     B->>B: Update UI
     B-->>U: Display Results
 ```
@@ -164,28 +202,39 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "Frontend (Browser)"
-        HTML[📄 HTML Templates]
-        CSS[🎨 CSS Styles]
-        JS[📜 JavaScript Modules]
+    subgraph "AWS Cloud - EC2 Instance"
+        subgraph "Frontend (Browser)"
+            HTML[📄 HTML Templates<br/>/opt/git-captain/public/views/]
+            CSS[🎨 CSS Styles<br/>/opt/git-captain/public/css/]
+            JS[📜 JavaScript Modules<br/>/opt/git-captain/public/js/]
+            
+            subgraph "JS Modules"
+                Tools[🔧 tools.js<br/>• AJAX calls<br/>• Auth management]
+                Branch[🌿 branchUtils.js<br/>• Branch operations<br/>• Repository management]
+                View[👁️ viewUtils.js<br/>• UI updates<br/>• Result display]
+            end
+        end
         
-        subgraph "JS Modules"
-            Tools[🔧 tools.js<br/>• AJAX calls<br/>• Auth management]
-            Branch[🌿 branchUtils.js<br/>• Branch operations<br/>• Repository management]
-            View[👁️ viewUtils.js<br/>• UI updates<br/>• Result display]
+        subgraph "Backend (Node.js)"
+            Server[🖥️ server.js<br/>Main Application<br/>PM2 Managed]
+            
+            subgraph "Core Modules"
+                HTTP[🌐 httpClient.js<br/>• Axios wrapper<br/>• GitHub API calls]
+                Middleware[🛡️ middleware.js<br/>• Security stack<br/>• Rate limiting]
+                Validation[✅ validation.js<br/>• Input schemas<br/>• Sanitization]
+                Logger[📝 logger.js<br/>• Winston logging<br/>• File rotation]
+                Config[⚙️ config.js<br/>• .env vars<br/>• App settings]
+            end
+            
+            SSL[🔒 SSL Certificates<br/>theKey.key + theCert.cert]
         end
     end
     
-    subgraph "Backend (Node.js)"
-        Server[🖥️ server.js<br/>Main Application]
-        
-        subgraph "Core Modules"
-            HTTP[🌐 httpClient.js<br/>• Axios wrapper<br/>• GitHub API calls]
-            Middleware[🛡️ middleware.js<br/>• Security stack<br/>• Rate limiting]
-            Validation[✅ validation.js<br/>• Input schemas<br/>• Sanitization]
-            Logger[📝 logger.js<br/>• Winston logging<br/>• File rotation]
-            Config[⚙️ config.js<br/>• Environment vars<br/>• App settings]
-        end
+    subgraph "AWS Services"
+        RDS[(💾 RDS PostgreSQL<br/>Private Subnet<br/>Port 5432)]
+        Lambda[⚡ Lambda Function<br/>S3 Logging<br/>Python 3.9]
+        CloudWatch[📊 CloudWatch<br/>Logs & Metrics]
+        S3[📦 S3 Bucket<br/>Log Storage]
     end
     
     subgraph "External APIs"
@@ -207,16 +256,24 @@ graph TB
     Server --> Validation
     Server --> Logger
     Server --> Config
+    Server --> SSL
+    Server --> RDS
+    
+    Logger --> CloudWatch
+    CloudWatch --> S3
+    Lambda --> S3
     
     HTTP --> GitHubAPI
     
     classDef frontend fill:#e3f2fd
     classDef backend fill:#f3e5f5
     classDef external fill:#e8f5e8
+    classDef aws fill:#ff9800
     
     class HTML,CSS,JS,Tools,Branch,View frontend
-    class Server,HTTP,Middleware,Validation,Logger,Config backend
+    class Server,HTTP,Middleware,Validation,Logger,Config,SSL backend
     class GitHubAPI external
+    class RDS,Lambda,CloudWatch,S3 aws
 ```
 
 ## 📊 Data Flow Diagram
@@ -263,11 +320,12 @@ flowchart TD
 
 ```mermaid
 graph TD
-    Root[📁 Git-Captain/] --> Controllers[📁 controllers/]
+    Root[📁 /opt/git-captain/<br/>EC2 Instance] --> Controllers[📁 controllers/]
     Root --> Public[📁 public/]
     Root --> Docs[📁 docs/]
     Root --> Logs[📁 logs/]
     Root --> Config[📄 Config Files]
+    Root --> AWS[📁 AWS IaC]
     
     Controllers --> Server[🔧 server.js]
     Controllers --> HTTP[🌐 httpClient.js]
@@ -276,7 +334,7 @@ graph TD
     Controllers --> Log[📝 logger.js]
     Controllers --> Cfg[⚙️ config.js]
     Controllers --> Env[🔐 .env]
-    Controllers --> SSL[🔑 SSL Certificates]
+    Controllers --> SSL[🔑 SSL Certificates<br/>theKey.key + theCert.cert]
     
     Public --> CSS[📁 css/]
     Public --> JS[📁 js/]
@@ -292,23 +350,33 @@ graph TD
     
     Docs --> Deploy[📖 DEPLOYMENT.md]
     Docs --> Arch[🏗️ ARCHITECTURE.md]
+    Docs --> AWSDoc[☁️ aws/<br/>AWS_ARCHITECTURE.md]
+    
+    AWS --> Terraform[📦 terraform/<br/>VPC Infrastructure]
+    AWS --> CloudFormation[☁️ cloudformation/<br/>EC2, RDS, Lambda]
     
     Config --> Package[📦 package.json]
     Config --> README[📖 README.md]
     Config --> Setup[⚡ SETUP.md]
     Config --> Updates[📋 MODULE_UPDATES.md]
     
+    Logs --> AppLogs[📝 application.log<br/>error.log]
+    Logs --> PM2Logs[🔄 PM2 Logs<br/>~/.pm2/logs/]
+    Logs --> CloudWatchLogs[📊 CloudWatch Logs<br/>/aws/ec2/git-captain]
+    
     classDef folder fill:#fff3e0
     classDef backend fill:#f3e5f5
     classDef frontend fill:#e3f2fd
     classDef docs fill:#e8f5e8
     classDef config fill:#ffebee
+    classDef aws fill:#ff9800
     
     class Root,Controllers,Public,Docs,Logs folder
     class Server,HTTP,Mid,Val,Log,Cfg,Env,SSL backend
     class CSS,JS,Images,Views,Tools,Branch,ViewUtils,Index,Auth frontend
-    class Deploy,Arch docs
+    class Deploy,Arch,AWSDoc docs
     class Config,Package,README,Setup,Updates config
+    class AWS,Terraform,CloudFormation,AppLogs,PM2Logs,CloudWatchLogs aws
 ```
 
 ---

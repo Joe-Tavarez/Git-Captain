@@ -34,12 +34,22 @@ Git-Captain is a powerful web application that simplifies managing multiple GitH
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Deployment Options
+
+Git-Captain can be deployed in multiple ways to suit your needs:
+
+- **☁️ AWS Cloud**: Automated infrastructure deployment with Terraform and CloudFormation → [AWS Deployment Guide](docs/aws/AWS_ARCHITECTURE.md)
+- **💻 On-Premises**: Traditional server installation → See [Local Installation](#local-installation) below
+- **🐳 Docker**: Containerized deployment (coming soon)
+
+### Local Installation
+
+#### Prerequisites
 - **Node.js 18+** 
 - **GitHub account** with repository access
 - **SSL certificates** (for HTTPS)
 
-### Installation
+#### Installation Steps
 
 1. **Clone the repository**
    ```bash
@@ -152,40 +162,54 @@ Git-Captain implements enterprise-grade security measures:
 
 ## 🏗️ Architecture Overview
 
-Git-Captain v2.0 features a modern, secure architecture built on Node.js and Express:
+Git-Captain v2.0 features a modern, secure architecture deployed on AWS infrastructure:
 
 ```mermaid
 graph TB
     User[👤 User] --> Browser[🌐 Browser]
-    Browser -->|HTTPS| Proxy[🔄 Reverse Proxy]
-    Proxy --> App[🚀 Git-Captain App<br/>Node.js + Express]
     
-    App --> Security[🛡️ Security Layer<br/>Helmet + CORS + Rate Limiting]
-    App --> Auth[🔐 GitHub OAuth<br/>Authentication]
-    App --> API[🐙 GitHub API<br/>Repository Operations]
-    
-    App --> Logs[📄 Winston Logging]
-    App --> Static[📁 Static Assets]
+    subgraph "AWS Cloud"
+        Browser -->|HTTPS| IGW[🌐 Internet Gateway]
+        IGW --> SG[🛡️ Security Groups]
+        SG --> EC2[🖥️ EC2 Instance<br/>Amazon Linux 2023]
+        
+        EC2 --> App[🚀 Git-Captain App<br/>Node.js 18 + Express<br/>PM2 Managed]
+        
+        App --> Security[🛡️ Security Layer<br/>Helmet + CORS + Rate Limiting]
+        App --> Auth[🔐 GitHub OAuth<br/>Authentication]
+        
+        App --> NAT[🔄 NAT Gateway]
+        NAT --> API[🐙 GitHub API<br/>Repository Operations]
+        
+        App --> RDS[(💾 RDS PostgreSQL<br/>Private Subnet)]
+        App --> CloudWatch[📊 CloudWatch<br/>Logs & Metrics]
+        
+        Lambda[⚡ Lambda] --> S3[📦 S3 Logs]
+    end
 
     classDef user fill:#e1f5fe
+    classDef aws fill:#ff9800
     classDef app fill:#e8f5e8
     classDef security fill:#fff3e0
     classDef external fill:#fce4ec
 
     class User,Browser user
-    class Proxy,App app
+    class IGW,SG,EC2,NAT,RDS,CloudWatch,Lambda,S3 aws
+    class App app
     class Security,Auth security
-    class API,Logs,Static external
+    class API external
 ```
 
 **Key Components:**
-- **Security-First Design**: Multiple layers of protection including rate limiting, input validation, and security headers
+- **AWS Infrastructure**: VPC with public/private subnets, EC2, RDS PostgreSQL, Lambda, CloudWatch
+- **Security-First Design**: Multiple layers including AWS Security Groups, rate limiting, input validation, and security headers
 - **OAuth Integration**: Seamless GitHub authentication with secure token handling
 - **Modern HTTP Client**: Axios-based client replacing deprecated request library
-- **Comprehensive Logging**: Winston-powered structured logging with rotation
-- **Production Ready**: Designed for scalability with PM2 process management
+- **Comprehensive Logging**: Winston-powered structured logging with CloudWatch integration
+- **Production Ready**: PM2 process management with auto-restart and monitoring
 
 📋 **Detailed Documentation:**
+- **[AWS Deployment Architecture](docs/aws/AWS_ARCHITECTURE.md)** - Complete AWS cloud infrastructure guide
 - **[System Architecture](docs/ARCHITECTURE.md)** - Complete architecture with interactive Mermaid diagrams
 - **[Architecture Tools](docs/ARCHITECTURE_TOOLS.md)** - Guide to various diagramming tools for GitHub
 - **[Deployment Guide](docs/DEPLOYMENT.md)** - Production deployment instructions
