@@ -16,73 +16,95 @@ Git-Captain is a modernized Node.js web application that provides a secure inter
 
 ```mermaid
 graph TB
-    subgraph "Client Layer"
-        Browser[🌐 Web Browser]
-        User[👤 User]
+    subgraph Client["<b>👤 Client Layer</b>"]
+        User[🌐 Web Browser]
     end
 
-    subgraph "AWS Cloud - VPC 10.0.0.0/16"
-        subgraph "Public Subnet - us-east-2a/2b"
-            IGW[🌐 Internet Gateway]
-            EC2[🖥️ EC2 Instance<br/>Amazon Linux 2023<br/>t3.micro - Port 3000]
+    subgraph AWS["<b>☁️ AWS Cloud Infrastructure - us-east-2</b>"]
+        subgraph Network["<b>🌐 Network Layer</b>"]
+            IGW[Internet Gateway]
+            NAT[NAT Gateway]
+            SG[Security Groups<br/>Ports: 3000, 443, 5432]
         end
         
-        subgraph "Private Subnet - us-east-2a/2b"
-            RDS[(💾 RDS PostgreSQL<br/>db.t3.micro<br/>Multi-AZ Ready)]
-            Lambda[⚡ Lambda Function<br/>S3 Logger<br/>Python 3.9]
+        subgraph Public["<b>📡 Public Subnet</b>"]
+            EC2[EC2 Instance<br/>Amazon Linux 2023<br/>t3.micro<br/>IP: 3.16.130.8]
         end
         
-        NAT[🔄 NAT Gateway<br/>Private → Internet]
-        SG[🛡️ Security Groups<br/>Port 3000, 443, 5432]
-    end
-
-    subgraph "Application Layer - EC2"
-        App[🚀 Git-Captain Server<br/>Node.js 18 + Express<br/>PM2 Managed]
+        subgraph Private["<b>🔒 Private Subnet</b>"]
+            RDS[(RDS PostgreSQL 15<br/>db.t3.micro<br/>Multi-AZ Ready)]
+            Lambda[Lambda Function<br/>S3 Logger<br/>Python 3.9]
+        end
         
-        subgraph "Security Middleware Stack"
-            Helmet[🛡️ Helmet<br/>Security Headers]
-            CORS[🔗 CORS<br/>Cross-Origin Resource Sharing]
-            RateLimit[⏱️ Rate Limiting<br/>200/min, 300/5min]
-            Validator[✅ Input Validation<br/>Schema validation]
-            Auth[🔐 Authentication<br/>GitHub OAuth 2.0]
+        subgraph Services["<b>🛠️ AWS Services</b>"]
+            CW[CloudWatch<br/>Logs & Metrics]
+            S3[S3 Bucket<br/>Log Storage]
+            SSM[Systems Manager<br/>Remote Access]
         end
     end
 
-    subgraph "AWS Services"
-        CloudWatch[📊 CloudWatch<br/>Logs & Metrics]
-        SSM[🔧 Systems Manager<br/>Remote Access]
-        S3[📦 S3 Buckets<br/>Logging Storage]
+    subgraph App["<b>🚀 Application Layer - EC2</b>"]
+        PM2[PM2 Process Manager]
+        Node[Node.js 18 + Express<br/>Port 3000]
+        
+        subgraph Security["<b>🛡️ Security Middleware</b>"]
+            RL[Rate Limiting<br/>200/min, 300/5min]
+            CORS[CORS Protection]
+            Helmet[Security Headers]
+            Valid[Input Validation]
+        end
     end
 
-    subgraph "External Services"
-        GitHub[🐙 GitHub API<br/>REST & GraphQL<br/>api.github.com]
+    subgraph External["<b>🌍 External Services</b>"]
+        GitHub[GitHub API<br/>api.github.com]
+        OAuth[GitHub OAuth]
     end
 
-    User --> Browser
-    Browser -->|HTTPS| IGW
+    User -->|HTTPS:3000| IGW
     IGW --> SG
     SG --> EC2
-    EC2 --> App
-    App --> Helmet
-    Helmet --> CORS
-    CORS --> RateLimit
-    RateLimit --> Validator
-    Validator --> Auth
-    Auth -->|NAT Gateway| GitHub
-    App --> RDS
-    App --> CloudWatch
+    EC2 --> PM2
+    PM2 --> Node
+    Node --> RL
+    RL --> CORS
+    CORS --> Helmet
+    Helmet --> Valid
+    Valid -->|via NAT| GitHub
+    Valid --> OAuth
+    Node --> RDS
+    Node --> CW
     Lambda --> S3
+    CW --> S3
     EC2 --> SSM
 
-    style User fill:#e1f5fe
-    style Browser fill:#f3e5f5
-    style EC2 fill:#ff9800
-    style App fill:#e8f5e8
-    style GitHub fill:#f1f8ff
-    style RDS fill:#1976d2
-    style Lambda fill:#ffd54f
-    style CloudWatch fill:#4caf50
-    style S3 fill:#e91e63
+    style Client fill:#e3f2fd,stroke:#1976d2,stroke-width:3px
+    style AWS fill:#fff3e0,stroke:#f57c00,stroke-width:3px
+    style Network fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style Public fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style Private fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style Services fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
+    style App fill:#fff9c4,stroke:#f57f17,stroke-width:3px
+    style Security fill:#ffebee,stroke:#d32f2f,stroke-width:2px
+    style External fill:#f1f8e9,stroke:#689f38,stroke-width:3px
+    
+    style User fill:#42a5f5,stroke:#1565c0,stroke-width:2px,color:#fff
+    style IGW fill:#9c27b0,stroke:#4a148c,stroke-width:2px,color:#fff
+    style NAT fill:#9c27b0,stroke:#4a148c,stroke-width:2px,color:#fff
+    style SG fill:#ff6f00,stroke:#e65100,stroke-width:2px,color:#fff
+    style EC2 fill:#43a047,stroke:#1b5e20,stroke-width:2px,color:#fff
+    style RDS fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
+    style Lambda fill:#fbc02d,stroke:#f57f17,stroke-width:2px,color:#000
+    style CW fill:#00acc1,stroke:#006064,stroke-width:2px,color:#fff
+    style S3 fill:#e91e63,stroke:#880e4f,stroke-width:2px,color:#fff
+    style SSM fill:#5e35b1,stroke:#311b92,stroke-width:2px,color:#fff
+    style PM2 fill:#66bb6a,stroke:#2e7d32,stroke-width:2px,color:#fff
+    style Node fill:#4caf50,stroke:#1b5e20,stroke-width:2px,color:#fff
+    style RL fill:#ef5350,stroke:#b71c1c,stroke-width:2px,color:#fff
+    style CORS fill:#ef5350,stroke:#b71c1c,stroke-width:2px,color:#fff
+    style Helmet fill:#ef5350,stroke:#b71c1c,stroke-width:2px,color:#fff
+    style Valid fill:#ef5350,stroke:#b71c1c,stroke-width:2px,color:#fff
+    style GitHub fill:#7cb342,stroke:#33691e,stroke-width:2px,color:#fff
+    style OAuth fill:#7cb342,stroke:#33691e,stroke-width:2px,color:#fff
 ```
 
 ## 🔧 Error Handling & Recovery Architecture
@@ -178,142 +200,139 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant U as 👤 User
-    participant B as 🌐 Browser
-    participant IGW as 🌐 Internet Gateway
-    participant SG as 🛡️ Security Group
-    participant EC2 as 🖥️ EC2 Instance
-    participant A as 🚀 Git-Captain App
-    participant M as 🔧 Middleware Stack
-    participant R as 🔀 Router
-    participant NAT as 🔄 NAT Gateway
-    participant G as 🐙 GitHub API
-    participant RDS as 💾 RDS PostgreSQL
+    autonumber
+    participant User as 👤 User
+    participant Browser as 🌐 Browser
+    participant IGW as 🌐 IGW
+    participant SG as 🛡️ Security
+    participant EC2 as 🖥️ EC2
+    participant App as 🚀 App
+    participant Security as 🛡️ Middleware
+    participant NAT as 🔄 NAT
+    participant GitHub as 🐙 GitHub
+    participant RDS as 💾 Database
     participant CW as 📊 CloudWatch
-
-    Note over U,CW: OAuth Authentication Flow (AWS)
-    U->>B: Access Application
-    B->>IGW: HTTPS Request (Port 443/3000)
+    
+    rect rgb(227, 242, 253)
+    Note over User,CW: OAuth Authentication Flow
+    User->>Browser: Access Application
+    Browser->>IGW: HTTPS Request :3000
     IGW->>SG: Route to VPC
-    SG->>EC2: Allow Port 3000
-    EC2->>A: PM2 Process
-    A->>M: Security Middleware
-    M->>A: Security Headers + CORS
-    A->>CW: Log Request
-    A->>B: Redirect to GitHub OAuth
-    B->>G: OAuth Authorization Request
-    G->>B: Authorization Code
-    B->>IGW: POST /gitCaptain/getToken + code
-    IGW->>EC2: Forward Request
-    EC2->>A: Handle Request
-    A->>M: Rate Limit + Validation
-    M->>R: Route to Token Handler
-    R->>NAT: Route to Internet
-    NAT->>G: Exchange Code for Token
-    G->>NAT: Access Token
-    NAT->>R: Return Token
-    R->>A: Success Response
-    A->>CW: Log Authentication
-    A->>B: Token + User Data
-
-    Note over U,CW: Branch Operations (AWS)
-    U->>B: Branch Create/Search/Delete
-    B->>IGW: POST /gitCaptain/{operation}
+    SG->>EC2: Allow Traffic
+    EC2->>App: PM2 → Node.js
+    App->>Security: Check Security
+    Security->>Security: Rate Limit ✓<br/>CORS ✓<br/>Headers ✓<br/>Validation ✓
+    App->>CW: Log Request
+    App->>Browser: Redirect to GitHub
+    Browser->>GitHub: OAuth Request
+    GitHub->>Browser: Auth Code
+    Browser->>IGW: POST /getToken
+    IGW->>EC2: Forward
+    EC2->>App: Handle Token
+    App->>NAT: Exchange Code
+    NAT->>GitHub: Get Token
+    GitHub->>NAT: Access Token
+    NAT->>App: Token
+    App->>CW: Log Auth
+    App->>Browser: Success
+    end
+    
+    rect rgb(232, 245, 233)
+    Note over User,CW: Branch Operations
+    User->>Browser: Create/Search/Delete
+    Browser->>IGW: API Request
     IGW->>SG: Security Check
-    SG->>EC2: Forward to App
-    EC2->>A: Handle Request
-    A->>M: Security + Rate Limiting
-    M->>M: Input Validation
-    M->>R: Route to Handler
-    R->>NAT: Route to Internet
-    NAT->>G: GitHub API Call
-    G->>NAT: API Response
-    NAT->>R: Return Data
-    R->>RDS: Store/Query Data (Optional)
-    R->>A: Process Response
-    A->>CW: Log Operation
-    A->>EC2: Response
-    EC2->>B: JSON Response
-    B->>U: Display Result
+    SG->>EC2: Route Request
+    EC2->>App: Handle
+    App->>Security: Validate
+    App->>NAT: GitHub API Call
+    NAT->>GitHub: API Request
+    GitHub->>NAT: Response
+    NAT->>App: Data
+    App->>RDS: Store/Query
+    App->>CW: Log Operation
+    App->>Browser: Results
+    Browser->>User: Display
+    end
 ```
 
 ## 🏢 Component Architecture
 
 ```mermaid
-graph TB
-    subgraph "AWS Infrastructure"
-        subgraph "EC2 Instance - /opt/git-captain/"
-            subgraph "Frontend Components"
-                Index[📄 index.html<br/>Landing Page]
-                Auth[🔐 authenticated.html<br/>OAuth Callback]
-                CSS[🎨 styles.css<br/>UI Styling]
-                Tools[🔧 tools.js<br/>API Interactions]
-                Branch[🌿 branchUtils.js<br/>Branch Operations]
-                Utils[⚙️ viewUtils.js<br/>UI Utilities]
-            end
-
-            subgraph "Backend Controllers"
-                Server[🚀 server.js<br/>Main Application<br/>PM2 Managed]
-                Config[⚙️ config.js<br/>Environment Config<br/>.env file]
-                Middleware[🛡️ middleware.js<br/>Security Stack]
-                Validation[✅ validation.js<br/>Input Validation]
-                Logger[📝 logger.js<br/>Winston Logging]
-                HttpClient[🌐 httpClient.js<br/>Axios Wrapper]
-                Security[🔒 security.js<br/>Auth & Security]
-            end
-            
-            subgraph "Infrastructure"
-                SSL[🔒 SSL Certificates<br/>theKey.key + theCert.cert]
-                Logs[📄 Log Files<br/>PM2 + Application Logs]
-                Static[📁 Static Assets<br/>/opt/git-captain/public/]
-            end
+graph LR
+    subgraph Frontend["<b>🎨 Frontend Layer</b>"]
+        HTML[📄 HTML Templates<br/>index.html<br/>authenticated.html]
+        CSS[🎨 CSS Styles<br/>styles.css]
+        JS[⚡ JavaScript<br/>tools.js<br/>branchUtils.js<br/>viewUtils.js]
+    end
+    
+    subgraph Backend["<b>🖥️ Backend - EC2: /opt/git-captain/</b>"]
+        Server[🚀 server.js<br/>Main Application<br/>PM2 Managed]
+        
+        subgraph Core["<b>Core Modules</b>"]
+            HTTP[🌐 httpClient.js<br/>Axios + GitHub API]
+            MW[🛡️ middleware.js<br/>Security Stack]
+            Val[✅ validation.js<br/>Input Schemas]
+            Log[📝 logger.js<br/>Winston Logging]
+            Cfg[⚙️ config.js<br/>.env Config]
         end
         
-        RDS[(💾 RDS PostgreSQL<br/>Private Subnet<br/>Port 5432)]
-        Lambda[⚡ Lambda S3 Logger<br/>Python 3.9]
-        CloudWatch[📊 CloudWatch<br/>Logs & Metrics]
+        SSL[🔒 SSL/TLS<br/>Self-signed Certs]
+    end
+    
+    subgraph AWS["<b>☁️ AWS Services</b>"]
+        RDS[(💾 PostgreSQL<br/>Private Subnet)]
+        Lambda[⚡ Lambda<br/>S3 Logger]
+        CW[📊 CloudWatch<br/>Logs & Metrics]
         S3[📦 S3 Bucket<br/>Log Storage]
     end
     
-    subgraph "External Services"
-        GitHubAPI[🐙 GitHub API<br/>Repository Management]
+    subgraph External["<b>🌍 External APIs</b>"]
+        GH[🐙 GitHub API<br/>Repositories<br/>Branches<br/>Pull Requests]
         OAuth[🔑 GitHub OAuth<br/>Authentication]
     end
-
-    Index --> Server
-    Auth --> Server
-    Tools --> Server
-    Branch --> Server
     
-    Server --> Config
-    Server --> Middleware
-    Server --> Validation
-    Server --> Logger
-    Server --> HttpClient
-    Server --> Security
+    HTML --> Server
+    CSS --> Server
+    JS --> Server
     
-    HttpClient --> GitHubAPI
-    Security --> OAuth
-    
+    Server --> HTTP
+    Server --> MW
+    Server --> Val
+    Server --> Log
+    Server --> Cfg
     Server --> SSL
     Server --> RDS
-    Logger --> Logs
-    Logs --> CloudWatch
-    Server --> Static
+    
+    Log --> CW
+    CW --> S3
     Lambda --> S3
-    CloudWatch --> S3
-
-    classDef frontend fill:#e3f2fd,stroke:#0277bd,stroke-width:2px
-    classDef backend fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
-    classDef external fill:#fce4ec,stroke:#c2185b,stroke-width:2px
-    classDef infra fill:#f5f5f5,stroke:#616161,stroke-width:2px
-    classDef aws fill:#ff9800,stroke:#e65100,stroke-width:2px
-
-    class Index,Auth,CSS,Tools,Branch,Utils frontend
-    class Server,Config,Middleware,Validation,Logger,HttpClient,Security backend
-    class GitHubAPI,OAuth external
-    class SSL,Logs,Static infra
-    class RDS,Lambda,CloudWatch,S3 aws
+    
+    HTTP --> GH
+    Server --> OAuth
+    
+    style Frontend fill:#e3f2fd,stroke:#1976d2,stroke-width:3px
+    style Backend fill:#fff3e0,stroke:#f57c00,stroke-width:3px
+    style Core fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    style AWS fill:#e1f5fe,stroke:#0288d1,stroke-width:3px
+    style External fill:#f1f8e9,stroke:#689f38,stroke-width:3px
+    
+    style HTML fill:#42a5f5,stroke:#1565c0,stroke-width:2px,color:#fff
+    style CSS fill:#42a5f5,stroke:#1565c0,stroke-width:2px,color:#fff
+    style JS fill:#42a5f5,stroke:#1565c0,stroke-width:2px,color:#fff
+    style Server fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#fff
+    style HTTP fill:#fbc02d,stroke:#f57f17,stroke-width:2px
+    style MW fill:#fbc02d,stroke:#f57f17,stroke-width:2px
+    style Val fill:#fbc02d,stroke:#f57f17,stroke-width:2px
+    style Log fill:#fbc02d,stroke:#f57f17,stroke-width:2px
+    style Cfg fill:#fbc02d,stroke:#f57f17,stroke-width:2px
+    style SSL fill:#9c27b0,stroke:#4a148c,stroke-width:2px,color:#fff
+    style RDS fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
+    style Lambda fill:#00acc1,stroke:#006064,stroke-width:2px,color:#fff
+    style CW fill:#00acc1,stroke:#006064,stroke-width:2px,color:#fff
+    style S3 fill:#e91e63,stroke:#880e4f,stroke-width:2px,color:#fff
+    style GH fill:#7cb342,stroke:#33691e,stroke-width:2px,color:#fff
+    style OAuth fill:#7cb342,stroke:#33691e,stroke-width:2px,color:#fff
 ```
 
 ## 🔧 Technology Stack
