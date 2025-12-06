@@ -38,9 +38,48 @@ Git-Captain is a powerful web application that simplifies managing multiple GitH
 
 Git-Captain can be deployed in multiple ways to suit your needs:
 
-- **☁️ AWS Cloud**: Automated infrastructure deployment with Terraform and CloudFormation → [AWS Deployment Guide](docs/aws/AWS_ARCHITECTURE.md)
-- **💻 On-Premises**: Traditional server installation → See [Local Installation](#local-installation) below
-- **🐳 Docker**: Containerized deployment (coming soon)
+#### ⭐ Recommended: AWS Serverless (NEW!)
+**Zero server management, auto-scaling, $2/month**
+```powershell
+.\deploy-serverless.ps1
+```
+📖 [Serverless Quick Start](SERVERLESS_QUICKSTART.md) | [Full Guide](SERVERLESS_DEPLOYMENT.md)
+
+#### ☁️ AWS EC2/Infrastructure
+Traditional cloud deployment with Terraform/CloudFormation
+📖 [AWS Deployment Guide](docs/aws/AWS_ARCHITECTURE.md)
+
+#### 💻 Local Development
+Run on your local machine for development/testing
+📖 See [Local Installation](#local-installation) below
+
+---
+
+### Serverless Deployment (5 Minutes)
+
+The fastest way to get Git-Captain running in production:
+
+```bash
+# 1. Install Lambda dependencies
+cd lambda && npm install && cd ..
+
+# 2. Deploy with PowerShell script
+.\deploy-serverless.ps1
+
+# OR manually with SAM
+sam build && sam deploy --guided
+```
+
+**What you get:**
+- ✅ Auto-scaling Lambda functions
+- ✅ Global CDN via CloudFront  
+- ✅ 99.99% uptime
+- ✅ ~$2/month cost
+- ✅ Zero maintenance
+
+📖 **[Complete Serverless Guide →](SERVERLESS_DEPLOYMENT.md)**
+
+---
 
 ### Local Installation
 

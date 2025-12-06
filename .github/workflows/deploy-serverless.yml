@@ -1,0 +1,111 @@
+name: Deploy Serverless Git-Captain
+
+on:
+  push:
+    branches:
+      - main
+      - feature/AWS
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Setup AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Install Lambda dependencies
+        run: |
+          cd lambda
+          npm install --production
+
+      - name: SAM Build
+        run: |
+          sam build
+
+      - name: SAM Deploy
+        run: |
+          sam deploy \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --stack-name git-captain-serverless \
+            --capabilities CAPABILITY_IAM \
+            --region ${{ secrets.AWS_REGION }} \
+            --parameter-overrides \
+              GitHubClientId=${{ secrets.GITHUB_CLIENT_ID }} \
+              GitHubClientSecret=${{ secrets.GITHUB_CLIENT_SECRET }} \
+              GitHubOrgName=${{ secrets.GITHUB_ORG_NAME }}
+
+      - name: Get S3 Bucket Name
+        id: get-bucket
+        run: |
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-serverless \
+            --region ${{ secrets.AWS_REGION }} \
+            --query "Stacks[0].Outputs[?OutputKey=='StaticAssetsBucket'].OutputValue" \
+            --output text)
+          echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+
+      - name: Sync Static Assets to S3
+        run: |
+          aws s3 sync public/ s3://${{ steps.get-bucket.outputs.bucket_name }}/ \
+            --delete \
+            --exclude "*.md" \
+            --exclude ".DS_Store" \
+            --cache-control "public, max-age=31536000" \
+            --region ${{ secrets.AWS_REGION }}
+
+      - name: Get Stack Outputs
+        id: stack-outputs
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-serverless \
+            --region ${{ secrets.AWS_REGION }} \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text)
+          
+          CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-serverless \
+            --region ${{ secrets.AWS_REGION }} \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontUrl'].OutputValue" \
+            --output text)
+          
+          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+          echo "cloudfront_url=$CLOUDFRONT_URL" >> $GITHUB_OUTPUT
+
+      - name: Deployment Summary
+        run: |
+          echo "## Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Endpoints" >> $GITHUB_STEP_SUMMARY
+          echo "- **API URL**: ${{ steps.stack-outputs.outputs.api_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **CloudFront URL**: https://${{ steps.stack-outputs.outputs.cloudfront_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **S3 Bucket**: ${{ steps.get-bucket.outputs.bucket_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Update GitHub OAuth App callback URL to: \`https://${{ steps.stack-outputs.outputs.cloudfront_url }}/views/authenticated.html\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. Access your application at: https://${{ steps.stack-outputs.outputs.cloudfront_url }}" >> $GITHUB_STEP_SUMMARY

@@ -203,6 +203,10 @@ __pycache__/
 # Lambda deployment packages
 lambda-functions/**/*.zip
 
+# AWS SAM build artifacts
+.aws-sam/
+samconfig.toml.bak
+
 # Local environment and secrets
 .env.local
 .env.production
