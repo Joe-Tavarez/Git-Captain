@@ -4,15 +4,16 @@
 
 Git-Captain is a modernized Node.js web application that provides a secure interface for GitHub repository management with OAuth authentication and comprehensive security middleware.
 
-**🌐 AWS Deployment**: Git-Captain is deployed on AWS infrastructure. See [AWS Architecture Documentation](./aws/AWS_ARCHITECTURE.md) for detailed cloud deployment information.
+**🌐 AWS Deployment**: Git-Captain is deployed as a serverless application on AWS Lambda with Function URL. See [AWS Architecture Documentation](./aws/AWS_ARCHITECTURE.md) for detailed cloud deployment information.
 
 ## 📍 Deployment Options
 
-- **☁️ AWS Cloud** (Current): EC2, RDS PostgreSQL, Lambda, VPC infrastructure
+- **☁️ AWS Lambda** (Current): Serverless monolithic deployment with Function URL
+- **☁️ AWS Lambda Microservices** (Planned): Separate Lambda functions with API Gateway
 - **🖥️ On-Premises**: Traditional server deployment with reverse proxy
 - **🐳 Docker**: Container-based deployment (future enhancement)
 
-## 📊 High-Level Architecture
+## 📊 Current Architecture - Monolithic Lambda
 
 ```mermaid
 graph TB
@@ -20,89 +21,203 @@ graph TB
         User[🌐 Web Browser]
     end
 
-    subgraph AWS["<b>☁️ AWS Cloud Infrastructure - us-east-2</b>"]
-        subgraph Network["<b>🌐 Network Layer</b>"]
-            IGW[Internet Gateway]
-            NAT[NAT Gateway]
-            SG[Security Groups<br/>Ports: 3000, 443, 5432]
-        end
-        
-        subgraph Public["<b>📡 Public Subnet</b>"]
-            EC2[EC2 Instance<br/>Amazon Linux 2023<br/>t3.micro<br/>IP: 3.16.130.8]
-        end
-        
-        subgraph Private["<b>🔒 Private Subnet</b>"]
-            RDS[(RDS PostgreSQL 15<br/>db.t3.micro<br/>Multi-AZ Ready)]
-            Lambda[Lambda Function<br/>S3 Logger<br/>Python 3.9]
+    subgraph AWS["<b>☁️ AWS Lambda - us-east-2</b>"]
+        subgraph Lambda["<b>⚡ Lambda Function: git-captain</b>"]
+            FunctionURL[Function URL<br/>Public HTTPS Endpoint<br/>CORS Enabled]
+            
+            subgraph Handler["<b>🚀 Monolithic Handler</b>"]
+                Express[Express.js App<br/>serverless-http wrapper]
+                
+                subgraph Routes["<b>🛤️ All Routes in One Function</b>"]
+                    Health[GET /health<br/>Health Check]
+                    Status[GET /gitCaptain/checkGitHubStatus<br/>GitHub Status]
+                    Static[GET /static/*<br/>Static Files CSS/JS/Images]
+                    Home[GET /<br/>Landing Page + client_id injection]
+                    Auth[GET /authenticated.html<br/>OAuth Callback + client_id injection]
+                    Config[GET /config.js<br/>Client Config]
+                    Token[POST /gitCaptain/getToken<br/>OAuth Token Exchange]
+                    Repos[POST /gitCaptain/searchForRepos<br/>List Repositories]
+                    CreateBr[POST /gitCaptain/createBranches<br/>Create Branches]
+                    DeleteBr[DELETE /gitCaptain/deleteBranches<br/>Delete Branches]
+                    SearchBr[POST /gitCaptain/searchForBranch<br/>Search Branch]
+                    SearchPR[POST /gitCaptain/searchForPR<br/>Search Pull Request]
+                    LogOff[POST /gitCaptain/logOff<br/>Revoke Token]
+                end
+            end
+            
+            Runtime[Node.js 18.x Runtime<br/>512MB Memory<br/>30s Timeout]
         end
         
         subgraph Services["<b>🛠️ AWS Services</b>"]
-            CW[CloudWatch<br/>Logs & Metrics]
-            S3[S3 Bucket<br/>Log Storage]
-            SSM[Systems Manager<br/>Remote Access]
+            CW[CloudWatch Logs<br/>Function Logs]
+            Env[Environment Variables<br/>GITHUB_CLIENT_ID<br/>GITHUB_CLIENT_SECRET<br/>GITHUB_ORG_NAME<br/>NODE_ENV]
         end
     end
 
-    subgraph App["<b>🚀 Application Layer - EC2</b>"]
-        PM2[PM2 Process Manager]
-        Node[Node.js 18 + Express<br/>Port 3000]
+    subgraph External["<b>🌍 External Services</b>"]
+        GitHub[GitHub API<br/>api.github.com<br/>User repos, branches, PRs]
+        OAuth[GitHub OAuth<br/>github.com/login/oauth<br/>Authorization & token exchange]
+    end
+
+    User -->|HTTPS| FunctionURL
+    FunctionURL --> Express
+    Express --> Health
+    Express --> Status
+    Express --> Static
+    Express --> Home
+    Express --> Auth
+    Express --> Config
+    Express --> Token
+    Express --> Repos
+    Express --> CreateBr
+    Express --> DeleteBr
+    Express --> SearchBr
+    Express --> SearchPR
+    Express --> LogOff
+    
+    Token --> OAuth
+    Home --> Env
+    Auth --> Env
+    Config --> Env
+    Repos --> GitHub
+    CreateBr --> GitHub
+    DeleteBr --> GitHub
+    SearchBr --> GitHub
+    SearchPR --> GitHub
+    LogOff --> OAuth
+    
+    Handler --> Runtime
+    Runtime --> CW
+
+    style Client fill:#e3f2fd,stroke:#1976d2,stroke-width:3px
+    style AWS fill:#fff3e0,stroke:#f57c00,stroke-width:3px
+    style Lambda fill:#fff9c4,stroke:#f57f17,stroke-width:3px
+    style Handler fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style Routes fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style Services fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
+    style External fill:#f1f8e9,stroke:#689f38,stroke-width:3px
+    
+    style User fill:#42a5f5,stroke:#1565c0,stroke-width:2px,color:#fff
+    style FunctionURL fill:#fbc02d,stroke:#f57f17,stroke-width:2px,color:#000
+    style Express fill:#66bb6a,stroke:#2e7d32,stroke-width:2px,color:#fff
+    style Runtime fill:#9c27b0,stroke:#4a148c,stroke-width:2px,color:#fff
+    style CW fill:#00acc1,stroke:#006064,stroke-width:2px,color:#fff
+    style Env fill:#5e35b1,stroke:#311b92,stroke-width:2px,color:#fff
+    style GitHub fill:#7cb342,stroke:#33691e,stroke-width:2px,color:#fff
+    style OAuth fill:#7cb342,stroke:#33691e,stroke-width:2px,color:#fff
+    
+    style Health fill:#4caf50,stroke:#1b5e20,stroke-width:1px,color:#fff
+    style Status fill:#4caf50,stroke:#1b5e20,stroke-width:1px,color:#fff
+    style Static fill:#4caf50,stroke:#1b5e20,stroke-width:1px,color:#fff
+    style Home fill:#4caf50,stroke:#1b5e20,stroke-width:1px,color:#fff
+    style Auth fill:#4caf50,stroke:#1b5e20,stroke-width:1px,color:#fff
+    style Config fill:#4caf50,stroke:#1b5e20,stroke-width:1px,color:#fff
+    style Token fill:#2196f3,stroke:#0d47a1,stroke-width:1px,color:#fff
+    style Repos fill:#2196f3,stroke:#0d47a1,stroke-width:1px,color:#fff
+    style CreateBr fill:#2196f3,stroke:#0d47a1,stroke-width:1px,color:#fff
+    style DeleteBr fill:#2196f3,stroke:#0d47a1,stroke-width:1px,color:#fff
+    style SearchBr fill:#2196f3,stroke:#0d47a1,stroke-width:1px,color:#fff
+    style SearchPR fill:#2196f3,stroke:#0d47a1,stroke-width:1px,color:#fff
+    style LogOff fill:#2196f3,stroke:#0d47a1,stroke-width:1px,color:#fff
+```
+
+## 🔮 Future Architecture - Microservices with API Gateway
+
+```mermaid
+graph TB
+    subgraph Client["<b>👤 Client Layer</b>"]
+        User[🌐 Web Browser]
+    end
+
+    subgraph AWS["<b>☁️ AWS Infrastructure - us-east-2</b>"]
+        subgraph Gateway["<b>🌐 API Gateway</b>"]
+            API[REST API<br/>Single Entry Point<br/>CORS Enabled]
+            
+            subgraph Routes["<b>🛤️ Route Configuration</b>"]
+                R1[GET / → web-server]
+                R2[GET /authenticated.html → web-server]
+                R3[GET /static/* → web-server]
+                R4[POST /gitCaptain/getToken → auth-service]
+                R5[POST /gitCaptain/searchForRepos → repo-service]
+                R6[POST /gitCaptain/*Branches → branch-service]
+                R7[POST /gitCaptain/searchForBranch → branch-service]
+                R8[POST /gitCaptain/searchForPR → branch-service]
+                R9[POST /gitCaptain/logOff → branch-service]
+            end
+        end
         
-        subgraph Security["<b>🛡️ Security Middleware</b>"]
-            RL[Rate Limiting<br/>200/min, 300/5min]
-            CORS[CORS Protection]
-            Helmet[Security Headers]
-            Valid[Input Validation]
+        subgraph Lambdas["<b>⚡ Lambda Microservices</b>"]
+            WebLambda[🌐 web-server<br/>Static content & pages<br/>Client config injection<br/>Node.js 18.x]
+            
+            AuthLambda[🔐 auth-service<br/>OAuth token exchange<br/>GitHub authorization<br/>Node.js 18.x]
+            
+            RepoLambda[📦 repo-service<br/>Repository listing<br/>User & org repos<br/>Node.js 18.x]
+            
+            BranchLambda[🌿 branch-service<br/>Branch operations<br/>PR search & logout<br/>Node.js 18.x]
+        end
+        
+        subgraph Services["<b>🛠️ AWS Services</b>"]
+            CW[CloudWatch Logs<br/>Centralized Logging]
+            Env[Environment Variables<br/>Per Function Config]
         end
     end
 
     subgraph External["<b>🌍 External Services</b>"]
         GitHub[GitHub API<br/>api.github.com]
-        OAuth[GitHub OAuth]
+        OAuth[GitHub OAuth<br/>github.com/login/oauth]
     end
 
-    User -->|HTTPS:3000| IGW
-    IGW --> SG
-    SG --> EC2
-    EC2 --> PM2
-    PM2 --> Node
-    Node --> RL
-    RL --> CORS
-    CORS --> Helmet
-    Helmet --> Valid
-    Valid -->|via NAT| GitHub
-    Valid --> OAuth
-    Node --> RDS
-    Node --> CW
-    Lambda --> S3
-    CW --> S3
-    EC2 --> SSM
+    User -->|HTTPS| API
+    API --> R1
+    API --> R2
+    API --> R3
+    API --> R4
+    API --> R5
+    API --> R6
+    API --> R7
+    API --> R8
+    API --> R9
+    
+    R1 --> WebLambda
+    R2 --> WebLambda
+    R3 --> WebLambda
+    R4 --> AuthLambda
+    R5 --> RepoLambda
+    R6 --> BranchLambda
+    R7 --> BranchLambda
+    R8 --> BranchLambda
+    R9 --> BranchLambda
+    
+    WebLambda --> Env
+    AuthLambda --> OAuth
+    AuthLambda --> Env
+    RepoLambda --> GitHub
+    RepoLambda --> Env
+    BranchLambda --> GitHub
+    BranchLambda --> OAuth
+    BranchLambda --> Env
+    
+    WebLambda --> CW
+    AuthLambda --> CW
+    RepoLambda --> CW
+    BranchLambda --> CW
 
     style Client fill:#e3f2fd,stroke:#1976d2,stroke-width:3px
     style AWS fill:#fff3e0,stroke:#f57c00,stroke-width:3px
-    style Network fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    style Public fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    style Private fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style Gateway fill:#e8f5e9,stroke:#388e3c,stroke-width:3px
+    style Routes fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style Lambdas fill:#fff9c4,stroke:#f57f17,stroke-width:3px
     style Services fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
-    style App fill:#fff9c4,stroke:#f57f17,stroke-width:3px
-    style Security fill:#ffebee,stroke:#d32f2f,stroke-width:2px
     style External fill:#f1f8e9,stroke:#689f38,stroke-width:3px
     
     style User fill:#42a5f5,stroke:#1565c0,stroke-width:2px,color:#fff
-    style IGW fill:#9c27b0,stroke:#4a148c,stroke-width:2px,color:#fff
-    style NAT fill:#9c27b0,stroke:#4a148c,stroke-width:2px,color:#fff
-    style SG fill:#ff6f00,stroke:#e65100,stroke-width:2px,color:#fff
-    style EC2 fill:#43a047,stroke:#1b5e20,stroke-width:2px,color:#fff
-    style RDS fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
-    style Lambda fill:#fbc02d,stroke:#f57f17,stroke-width:2px,color:#000
+    style API fill:#43a047,stroke:#1b5e20,stroke-width:2px,color:#fff
+    style WebLambda fill:#9c27b0,stroke:#4a148c,stroke-width:2px,color:#fff
+    style AuthLambda fill:#fbc02d,stroke:#f57f17,stroke-width:2px,color:#000
+    style RepoLambda fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
+    style BranchLambda fill:#e91e63,stroke:#880e4f,stroke-width:2px,color:#fff
     style CW fill:#00acc1,stroke:#006064,stroke-width:2px,color:#fff
-    style S3 fill:#e91e63,stroke:#880e4f,stroke-width:2px,color:#fff
-    style SSM fill:#5e35b1,stroke:#311b92,stroke-width:2px,color:#fff
-    style PM2 fill:#66bb6a,stroke:#2e7d32,stroke-width:2px,color:#fff
-    style Node fill:#4caf50,stroke:#1b5e20,stroke-width:2px,color:#fff
-    style RL fill:#ef5350,stroke:#b71c1c,stroke-width:2px,color:#fff
-    style CORS fill:#ef5350,stroke:#b71c1c,stroke-width:2px,color:#fff
-    style Helmet fill:#ef5350,stroke:#b71c1c,stroke-width:2px,color:#fff
-    style Valid fill:#ef5350,stroke:#b71c1c,stroke-width:2px,color:#fff
+    style Env fill:#5e35b1,stroke:#311b92,stroke-width:2px,color:#fff
     style GitHub fill:#7cb342,stroke:#33691e,stroke-width:2px,color:#fff
     style OAuth fill:#7cb342,stroke:#33691e,stroke-width:2px,color:#fff
 ```

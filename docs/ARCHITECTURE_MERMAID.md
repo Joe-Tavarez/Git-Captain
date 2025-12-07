@@ -1,6 +1,6 @@
 # Git-Captain v2.0 Architecture Diagrams
 
-## 🏗️ High-Level System Architecture
+## 🏗️ Current Architecture - Monolithic Lambda
 
 ```mermaid
 graph TB
@@ -9,95 +9,180 @@ graph TB
         UI[📱 User Interface]
     end
     
-    subgraph "AWS Cloud Infrastructure"
-        subgraph "VPC 10.0.0.0/16 - us-east-2"
-            IGW[🌐 Internet Gateway]
+    subgraph "AWS Lambda - us-east-2"
+        FunctionURL[🌐 Function URL<br/>Public HTTPS Endpoint<br/>git-captain]
+        
+        subgraph "Lambda Function Handler"
+            Express[⚙️ Express.js App<br/>serverless-http wrapper<br/>Node.js 18.x]
             
-            subgraph "Public Subnets"
-                EC2[🖥️ EC2 Instance<br/>Amazon Linux 2023<br/>t3.micro]
-                NAT[🔄 NAT Gateway]
+            subgraph "All Routes in One Function"
+                Health[📊 GET /health]
+                Status[🔍 GET /gitCaptain/checkGitHubStatus]
+                Home[🏠 GET /]
+                AuthPage[🔐 GET /authenticated.html]
+                Static[📁 GET /static/*]
+                ConfigJS[⚙️ GET /config.js]
+                Token[🔑 POST /gitCaptain/getToken]
+                Repos[📦 POST /gitCaptain/searchForRepos]
+                CreateBr[🌿 POST /gitCaptain/createBranches]
+                DeleteBr[🗑️ DELETE /gitCaptain/deleteBranches]
+                SearchBr[🔍 POST /gitCaptain/searchForBranch]
+                SearchPR[📋 POST /gitCaptain/searchForPR]
+                LogOff[🚪 POST /gitCaptain/logOff]
             end
             
-            subgraph "Private Subnets"
-                RDS[(💾 RDS PostgreSQL 15<br/>db.t3.micro)]
-                Lambda[⚡ Lambda S3 Logger<br/>Python 3.9]
-            end
-            
-            SG[🛡️ Security Groups<br/>Web, DB, Lambda]
+            Config[📝 Environment Variables<br/>GITHUB_CLIENT_ID<br/>GITHUB_CLIENT_SECRET<br/>GITHUB_ORG_NAME<br/>NODE_ENV]
         end
         
-        CloudWatch[📊 CloudWatch<br/>Logs & Metrics]
-        S3[📦 S3 Bucket<br/>Log Storage]
-        SSM[🔧 Systems Manager]
-    end
-    
-    subgraph "Application Layer - EC2"
-        App[⚙️ Node.js Application<br/>Port 3000<br/>PM2 Managed]
-        
-        subgraph "Security Middleware"
-            Rate[🚦 Rate Limiter<br/>200/min, 300/5min]
-            CORS[🌐 CORS Protection]
-            Helmet[🛡️ Security Headers]
-            Validation[✅ Input Validation]
-        end
-        
-        subgraph "Core Components"
-            Router[🔀 Express Router]
-            Auth[🔐 OAuth Handler]
-            Branch[🌿 Branch Manager]
-            PR[📋 PR Manager]
-            Static[📁 Static Files]
-        end
-        
-        subgraph "Infrastructure"
-            HTTP[🌐 HTTP Client<br/>Axios]
-            Logger[📝 Winston Logger]
-            Config[⚙️ Configuration<br/>.env]
-            Middleware[🔧 Middleware Stack]
-        end
+        CloudWatch[📊 CloudWatch Logs]
     end
     
     subgraph "External Services"
-        GitHub[🐙 GitHub API]
-        OAuth[🔑 GitHub OAuth]
+        GitHub[🐙 GitHub API<br/>api.github.com]
+        OAuth[🔑 GitHub OAuth<br/>github.com/login/oauth]
     end
     
-    Browser --> IGW
-    IGW --> SG
-    SG --> EC2
-    EC2 --> App
-    App --> Rate
-    Rate --> CORS
-    CORS --> Helmet
-    Helmet --> Validation
-    Validation --> Router
-    Router --> Auth
-    Router --> Branch
-    Router --> PR
-    Router --> Static
-    Auth --> HTTP
-    Branch --> HTTP
-    PR --> HTTP
-    HTTP --> NAT
-    NAT --> GitHub
-    NAT --> OAuth
-    App --> RDS
-    Logger --> CloudWatch
-    CloudWatch --> S3
-    Lambda --> S3
-    EC2 --> SSM
+    Browser --> UI
+    UI --> FunctionURL
+    FunctionURL --> Express
     
-    classDef client fill:#e1f5fe
-    classDef security fill:#fff3e0
-    classDef core fill:#f3e5f5
-    classDef external fill:#e8f5e8
-    classDef aws fill:#ff9800
+    Express --> Health
+    Express --> Status
+    Express --> Home
+    Express --> AuthPage
+    Express --> Static
+    Express --> ConfigJS
+    Express --> Token
+    Express --> Repos
+    Express --> CreateBr
+    Express --> DeleteBr
+    Express --> SearchBr
+    Express --> SearchPR
+    Express --> LogOff
+    
+    Home --> Config
+    AuthPage --> Config
+    ConfigJS --> Config
+    Token --> OAuth
+    Token --> Config
+    Repos --> GitHub
+    Repos --> Config
+    CreateBr --> GitHub
+    CreateBr --> Config
+    DeleteBr --> GitHub
+    DeleteBr --> Config
+    SearchBr --> GitHub
+    SearchBr --> Config
+    SearchPR --> GitHub
+    SearchPR --> Config
+    LogOff --> OAuth
+    LogOff --> Config
+    
+    Express --> CloudWatch
+    
+    classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef lambda fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef routes fill:#f3e5f5,stroke:#4a148c,stroke-width:1px
+    classDef external fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef config fill:#fff9c4,stroke:#f57f17,stroke-width:2px
     
     class Browser,UI client
-    class Rate,CORS,Helmet,Validation security
-    class Router,Auth,Branch,PR,Static,HTTP,Logger,Config,Middleware core
+    class FunctionURL,Express lambda
+    class Health,Status,Home,AuthPage,Static,ConfigJS,Token,Repos,CreateBr,DeleteBr,SearchBr,SearchPR,LogOff routes
     class GitHub,OAuth external
-    class EC2,RDS,Lambda,CloudWatch,S3,NAT,IGW,SG,SSM aws
+    class Config,CloudWatch config
+```
+
+## 🔮 Future Architecture - Microservices with API Gateway
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        Browser[🌐 Browser Client]
+        UI[📱 User Interface]
+    end
+    
+    subgraph "AWS Infrastructure - us-east-2"
+        API[🌐 API Gateway<br/>REST API<br/>Single Entry Point]
+        
+        subgraph "Lambda Microservices"
+            WebLambda[🌐 web-server<br/>Static content & pages<br/>Client config injection<br/>Node.js 18.x]
+            
+            AuthLambda[🔐 auth-service<br/>OAuth token exchange<br/>GitHub authorization<br/>Node.js 18.x]
+            
+            RepoLambda[📦 repo-service<br/>Repository listing<br/>User & org repos<br/>Node.js 18.x]
+            
+            BranchLambda[🌿 branch-service<br/>Branch operations<br/>PR search & logout<br/>Node.js 18.x]
+        end
+        
+        CloudWatch[📊 CloudWatch Logs<br/>Centralized]
+        Env[📝 Environment Variables<br/>Per Function Config]
+    end
+    
+    subgraph "Route Mapping"
+        R1[GET / → web-server]
+        R2[GET /authenticated.html → web-server]
+        R3[GET /static/* → web-server]
+        R4[POST /gitCaptain/getToken → auth-service]
+        R5[POST /gitCaptain/searchForRepos → repo-service]
+        R6[POST /gitCaptain/*Branches → branch-service]
+        R7[POST /gitCaptain/searchFor* → branch-service]
+        R8[POST /gitCaptain/logOff → branch-service]
+    end
+    
+    subgraph "External Services"
+        GitHub[🐙 GitHub API<br/>api.github.com]
+        OAuth[🔑 GitHub OAuth<br/>github.com/login/oauth]
+    end
+    
+    Browser --> UI
+    UI --> API
+    
+    API --> R1
+    API --> R2
+    API --> R3
+    API --> R4
+    API --> R5
+    API --> R6
+    API --> R7
+    API --> R8
+    
+    R1 --> WebLambda
+    R2 --> WebLambda
+    R3 --> WebLambda
+    R4 --> AuthLambda
+    R5 --> RepoLambda
+    R6 --> BranchLambda
+    R7 --> BranchLambda
+    R8 --> BranchLambda
+    
+    WebLambda --> Env
+    AuthLambda --> OAuth
+    AuthLambda --> Env
+    RepoLambda --> GitHub
+    RepoLambda --> Env
+    BranchLambda --> GitHub
+    BranchLambda --> OAuth
+    BranchLambda --> Env
+    
+    WebLambda --> CloudWatch
+    AuthLambda --> CloudWatch
+    RepoLambda --> CloudWatch
+    BranchLambda --> CloudWatch
+    
+    classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef gateway fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef lambda fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef routes fill:#f3e5f5,stroke:#4a148c,stroke-width:1px
+    classDef external fill:#ffebee,stroke:#b71c1c,stroke-width:2px
+    classDef config fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    
+    class Browser,UI client
+    class API gateway
+    class WebLambda,AuthLambda,RepoLambda,BranchLambda lambda
+    class R1,R2,R3,R4,R5,R6,R7,R8 routes
+    class GitHub,OAuth external
+    class CloudWatch,Env config
 ```
 
 ## 🔄 Request Flow Architecture
