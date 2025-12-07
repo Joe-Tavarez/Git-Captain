@@ -173,10 +173,10 @@ function logOff(isTimedOut) {
 
     function callback() {
         if (isTimedOut) {
-            window.location.href = gitPortEndPoint + "?isTimedOut=true";
+            window.location.href = window.location.origin + "/?isTimedOut=true";
         }
         else {
-            window.location.href = gitPortEndPoint + "?isLogOff=true";
+            window.location.href = window.location.origin + "/?isLogOff=true";
         }
     }
 

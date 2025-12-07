@@ -179,6 +179,231 @@ app.post('/gitCaptain/searchForRepos', async (req, res) => {
     }
 });
 
+// Create branches endpoint
+app.post('/gitCaptain/createBranches', async (req, res) => {
+    try {
+        const { token, repo, branchRef, newBranch } = req.body;
+        
+        if (!token || !repo || !branchRef || !newBranch) {
+            return res.status(400).json({ 
+                statusCode: 400,
+                error: 'Missing required fields',
+                message: 'token, repo, branchRef, and newBranch are required'
+            });
+        }
+
+        // Get the reference branch SHA
+        const refUrl = `${config.gitHub.gitHubAPIendpoint}/repos/${config.gitHub.orgName}/${repo}/git/refs/heads/${branchRef}`;
+        
+        let refData;
+        try {
+            refData = await makeGitHubRequest(refUrl, token, 'GET');
+        } catch (error) {
+            // Try default branches if specified branch not found
+            const defaultBranches = ['main', 'master', 'develop'];
+            
+            for (const defaultBranch of defaultBranches) {
+                if (defaultBranch !== branchRef) {
+                    try {
+                        const defaultUrl = `${config.gitHub.gitHubAPIendpoint}/repos/${config.gitHub.orgName}/${repo}/git/refs/heads/${defaultBranch}`;
+                        refData = await makeGitHubRequest(defaultUrl, token, 'GET');
+                        break;
+                    } catch (err) {
+                        continue;
+                    }
+                }
+            }
+            
+            if (!refData) {
+                return res.json({
+                    statusCode: 404,
+                    message: `Could not find branch '${branchRef}' or any default branches in repository '${repo}'`
+                });
+            }
+        }
+
+        // Create the new branch
+        const createUrl = `${config.gitHub.gitHubAPIendpoint}/repos/${config.gitHub.orgName}/${repo}/git/refs`;
+        const createData = {
+            ref: `refs/heads/${newBranch}`,
+            sha: refData.object.sha
+        };
+
+        try {
+            const result = await makeGitHubRequest(createUrl, token, 'POST', createData);
+            res.json({ statusCode: 201, body: JSON.stringify(result) });
+        } catch (error) {
+            if (error.response?.status === 422) {
+                res.json({ statusCode: 422, message: 'Branch already exists' });
+            } else {
+                throw error;
+            }
+        }
+        
+    } catch (error) {
+        console.error('Create branch error:', error.message);
+        res.json({ 
+            statusCode: error.response?.status || 500, 
+            error: 'Failed to create branch',
+            message: error.message 
+        });
+    }
+});
+
+// Search for branch endpoint
+app.post('/gitCaptain/searchForBranch', async (req, res) => {
+    try {
+        const { token, repo, searchForBranch } = req.body;
+        
+        if (!token || !repo || !searchForBranch) {
+            return res.status(400).json({ 
+                statusCode: 400,
+                error: 'Missing required fields' 
+            });
+        }
+
+        const searchUrl = `${config.gitHub.gitHubAPIendpoint}/repos/${config.gitHub.orgName}/${repo}/git/refs/heads/${searchForBranch}`;
+        
+        try {
+            const result = await makeGitHubRequest(searchUrl, token, 'GET');
+            res.json({ statusCode: 200, body: JSON.stringify(result) });
+        } catch (error) {
+            res.json({ 
+                statusCode: error.response?.status || 404, 
+                body: JSON.stringify({ message: 'Branch not found' }) 
+            });
+        }
+        
+    } catch (error) {
+        console.error('Search branch error:', error.message);
+        res.json({ statusCode: 500, error: 'Failed to search branch' });
+    }
+});
+
+// Search for pull requests endpoint
+app.post('/gitCaptain/searchForPR', async (req, res) => {
+    try {
+        const { token, repo, state, prBaseBranch } = req.body;
+        
+        if (!token || !repo || !state || !prBaseBranch) {
+            return res.status(400).json({ 
+                statusCode: 400,
+                error: 'Missing required fields' 
+            });
+        }
+
+        const prUrl = `${config.gitHub.gitHubAPIendpoint}/repos/${config.gitHub.orgName}/${repo}/pulls?state=${state}&base=${prBaseBranch}`;
+        
+        try {
+            const result = await makeGitHubRequest(prUrl, token, 'GET');
+            res.json({ statusCode: 200, body: JSON.stringify(result) });
+        } catch (error) {
+            res.json({ 
+                statusCode: error.response?.status || 500, 
+                body: JSON.stringify([]) 
+            });
+        }
+        
+    } catch (error) {
+        console.error('Search PR error:', error.message);
+        res.json({ statusCode: 500, error: 'Failed to search pull requests' });
+    }
+});
+
+// Delete branches endpoint (DELETE method with plural name)
+app.delete('/gitCaptain/deleteBranches', async (req, res) => {
+    try {
+        const { token, repo, deleteBranch } = req.body;
+        
+        if (!token || !repo || !deleteBranch) {
+            return res.status(400).json({ 
+                statusCode: 400,
+                error: 'Missing required fields' 
+            });
+        }
+
+        const deleteUrl = `${config.gitHub.gitHubAPIendpoint}/repos/${config.gitHub.orgName}/${repo}/git/refs/heads/${deleteBranch}`;
+        
+        try {
+            await makeGitHubRequest(deleteUrl, token, 'DELETE');
+            res.json({ statusCode: 204, message: 'Branch deleted successfully' });
+        } catch (error) {
+            res.json({ 
+                statusCode: error.response?.status || 500, 
+                error: 'Failed to delete branch' 
+            });
+        }
+        
+    } catch (error) {
+        console.error('Delete branch error:', error.message);
+        res.json({ statusCode: 500, error: 'Failed to delete branch' });
+    }
+});
+
+// Delete branch endpoint
+app.post('/gitCaptain/deleteBranch', async (req, res) => {
+    try {
+        const { token, repo, deleteBranch } = req.body;
+        
+        if (!token || !repo || !deleteBranch) {
+            return res.status(400).json({ 
+                statusCode: 400,
+                error: 'Missing required fields' 
+            });
+        }
+
+        const deleteUrl = `${config.gitHub.gitHubAPIendpoint}/repos/${config.gitHub.orgName}/${repo}/git/refs/heads/${deleteBranch}`;
+        
+        try {
+            await makeGitHubRequest(deleteUrl, token, 'DELETE');
+            res.json({ statusCode: 204, message: 'Branch deleted successfully' });
+        } catch (error) {
+            res.json({ 
+                statusCode: error.response?.status || 500, 
+                error: 'Failed to delete branch' 
+            });
+        }
+        
+    } catch (error) {
+        console.error('Delete branch error:', error.message);
+        res.json({ statusCode: 500, error: 'Failed to delete branch' });
+    }
+});
+
+// Logout/revoke token endpoint
+app.post('/gitCaptain/logOff', async (req, res) => {
+    try {
+        const { token } = req.body;
+        
+        if (!token) {
+            return res.status(400).json({ statusCode: 400, error: 'Token is required' });
+        }
+
+        const revokeUrl = `${config.gitHub.gitHubAPIendpoint}/applications/${config.gitHub.client_id}/tokens/${token}`;
+        
+        const axios = require('axios');
+        try {
+            await axios.delete(revokeUrl, {
+                auth: {
+                    username: config.gitHub.client_id,
+                    password: config.gitHub.client_secret
+                },
+                headers: {
+                    'User-Agent': 'Git-Captain',
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            });
+            res.json({ statusCode: 204, message: 'Token revoked' });
+        } catch (error) {
+            res.json({ statusCode: error.response?.status || 500 });
+        }
+        
+    } catch (error) {
+        console.error('Logoff error:', error.message);
+        res.json({ statusCode: 500, error: 'Failed to revoke token' });
+    }
+});
+
 // Simple GitHub API helper
 async function makeGitHubRequest(url, token, method = 'GET', body = null) {
     const axios = require('axios');

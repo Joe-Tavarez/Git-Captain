@@ -135,11 +135,24 @@
 
     $(document).ready(function () {
         initJquerySelectors('authenticated');
-        authCode = getAuthCode(window.location.href);
-        showSpinner();
-        isGitCaptainUp();
-        getAccessToken();
-        buildTypeChange();
+        
+        // Check if this is a logout redirect
+        if (window.location.href.indexOf('isLogOff=true') !== -1 || window.location.href.indexOf('isTimedOut=true') !== -1) {
+            window.location.href = '/';
+            return;
+        }
+        
+        // Only try to get auth code if it exists in URL
+        if (window.location.href.indexOf('code=') !== -1) {
+            authCode = getAuthCode(window.location.href);
+            showSpinner();
+            isGitCaptainUp();
+            getAccessToken();
+            buildTypeChange();
+        } else {
+            // No auth code, redirect to home
+            window.location.href = '/';
+        }
     });
 
     $(document).click(function () {
