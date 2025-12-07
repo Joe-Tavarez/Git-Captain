@@ -2,90 +2,100 @@
 
 ## 🌐 AWS Deployment Overview
 
-Git-Captain is deployed on AWS using a combination of Infrastructure as Code (Terraform) and CloudFormation templates for scalable, secure cloud hosting.
+Git-Captain is deployed as a serverless application on AWS Lambda with Function URL, providing a scalable, cost-effective solution without infrastructure management.
 
-## 🏗️ AWS Infrastructure Architecture
+## 🏗️ Current AWS Architecture - Serverless Lambda
 
 ```mermaid
 graph TB
     subgraph "AWS Cloud - us-east-2 (Ohio)"
-        subgraph "VPC - 10.0.0.0/16"
-            subgraph "Public Subnets"
-                PubSub1[📍 Public Subnet 1<br/>10.0.1.0/24<br/>us-east-2a]
-                PubSub2[📍 Public Subnet 2<br/>10.0.2.0/24<br/>us-east-2b]
-                IGW[🌐 Internet Gateway]
-                NAT[🔀 NAT Gateway<br/>18.220.153.245]
+        subgraph "Serverless Application Layer"
+            FunctionURL[🌐 Lambda Function URL<br/>Public HTTPS Endpoint<br/>CORS Enabled<br/>joc2jtrmas2f3n75rwx5xtilka0ssomy.lambda-url.us-east-2.on.aws]
+            
+            subgraph "Lambda Function: git-captain"
+                Handler[⚡ Lambda Handler<br/>lambda-handler.js<br/>Monolithic Express App]
+                Runtime[🚀 Node.js 18.x Runtime<br/>512 MB Memory<br/>30s Timeout]
+                
+                subgraph "Application Routes"
+                    Health[GET /health]
+                    Status[GET /gitCaptain/checkGitHubStatus]
+                    Static[GET /static/*]
+                    Home[GET /]
+                    Auth[GET /authenticated.html]
+                    Config[GET /config.js]
+                    Token[POST /gitCaptain/getToken]
+                    Repos[POST /gitCaptain/searchForRepos]
+                    CreateBr[POST /gitCaptain/createBranches]
+                    DeleteBr[DELETE /gitCaptain/deleteBranches]
+                    SearchBr[POST /gitCaptain/searchForBranch]
+                    SearchPR[POST /gitCaptain/searchForPR]
+                    LogOff[POST /gitCaptain/logOff]
+                end
+                
+                Wrapper[📦 serverless-http<br/>Express to Lambda adapter]
             end
             
-            subgraph "Private Subnets"
-                PrivSub1[🔒 Private Subnet 1<br/>10.0.10.0/24<br/>us-east-2a]
-                PrivSub2[🔒 Private Subnet 2<br/>10.0.11.0/24<br/>us-east-2b]
-            end
-            
-            subgraph "EC2 Application Layer"
-                EC2[🖥️ EC2 Instance<br/>t3.micro<br/>Amazon Linux 2023<br/>i-0784fd62b72496655<br/>3.16.130.8]
-                SG1[🛡️ Security Group<br/>Web Access<br/>Ports 3000, 80, 443]
-                SG2[🛡️ Security Group<br/>EC2 Access<br/>SSH 22]
-            end
-            
-            subgraph "Database Layer"
-                RDS[🗄️ RDS PostgreSQL 15<br/>db.t3.micro<br/>Private Subnets]
-                SGDB[🛡️ RDS Security Group<br/>Port 5432]
-            end
-            
-            subgraph "Serverless Layer"
-                Lambda[⚡ Lambda Function<br/>S3 Logger<br/>Python 3.9]
-                S3[📦 S3 Bucket<br/>Application Storage]
-            end
+            IAM[🔐 IAM Role<br/>git-captain-lambda-role<br/>AWSLambdaBasicExecutionRole]
         end
         
         subgraph "AWS Services"
-            SSM[⚙️ Systems Manager<br/>Parameter Store<br/>Session Manager]
-            CW[📊 CloudWatch<br/>Logs & Monitoring]
-            SM[🔐 Secrets Manager<br/>API Keys & Tokens]
+            CW[📊 CloudWatch Logs<br/>/aws/lambda/git-captain<br/>Function execution logs]
+            Env[⚙️ Environment Variables<br/>GITHUB_CLIENT_ID<br/>GITHUB_CLIENT_SECRET<br/>GITHUB_ORG_NAME<br/>NODE_ENV=production]
         end
     end
     
-    subgraph "External"
-        Users[👥 Users]
-        GitHub[🐙 GitHub API]
+    subgraph "External Services"
+        Users[👥 Users<br/>Web Browsers]
+        GitHub[🐙 GitHub API<br/>api.github.com<br/>Repository operations]
+        OAuth[🔑 GitHub OAuth<br/>github.com/login/oauth<br/>Authentication]
     end
     
-    Users -->|HTTPS:3000| IGW
-    IGW --> PubSub1
-    IGW --> PubSub2
-    PubSub1 --> EC2
-    PubSub2 --> NAT
-    NAT --> PrivSub1
-    NAT --> PrivSub2
+    Users -->|HTTPS| FunctionURL
+    FunctionURL --> Handler
+    Handler --> Wrapper
+    Wrapper --> Runtime
     
-    EC2 --> SG1
-    EC2 --> SG2
-    EC2 --> RDS
-    EC2 --> Lambda
-    EC2 --> S3
-    RDS --> SGDB
+    Handler --> Health
+    Handler --> Status
+    Handler --> Static
+    Handler --> Home
+    Handler --> Auth
+    Handler --> Config
+    Handler --> Token
+    Handler --> Repos
+    Handler --> CreateBr
+    Handler --> DeleteBr
+    Handler --> SearchBr
+    Handler --> SearchPR
+    Handler --> LogOff
     
-    EC2 --> SSM
-    EC2 --> CW
-    EC2 --> SM
-    EC2 --> GitHub
+    Home --> Env
+    Auth --> Env
+    Config --> Env
+    Token --> OAuth
+    Token --> Env
+    Repos --> GitHub
+    Repos --> Env
+    CreateBr --> GitHub
+    DeleteBr --> GitHub
+    SearchBr --> GitHub
+    SearchPR --> GitHub
+    LogOff --> OAuth
     
-    classDef public fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
-    classDef private fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    classDef compute fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
-    classDef database fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-    classDef serverless fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    Runtime --> IAM
+    Runtime --> CW
+    
+    classDef serverless fill:#fce4ec,stroke:#c2185b,stroke-width:3px
+    classDef routes fill:#e3f2fd,stroke:#1976d2,stroke-width:1px
     classDef services fill:#e0f2f1,stroke:#00695c,stroke-width:2px
     classDef external fill:#ffebee,stroke:#d32f2f,stroke-width:2px
+    classDef config fill:#fff3e0,stroke:#f57c00,stroke-width:2px
     
-    class PubSub1,PubSub2,IGW,NAT public
-    class PrivSub1,PrivSub2 private
-    class EC2,SG1,SG2 compute
-    class RDS,SGDB database
-    class Lambda,S3 serverless
-    class SSM,CW,SM services
-    class Users,GitHub external
+    class FunctionURL,Handler,Runtime,Wrapper serverless
+    class Health,Status,Static,Home,Auth,Config,Token,Repos,CreateBr,DeleteBr,SearchBr,SearchPR,LogOff routes
+    class CW services
+    class Users,GitHub,OAuth external
+    class IAM,Env config
 ```
 
 ## 📋 Deployed Resources Summary
@@ -93,115 +103,110 @@ graph TB
 ### **Account Information**
 - **AWS Account ID**: 428207760450
 - **Region**: us-east-2 (Ohio)
-- **Deployment Date**: December 2, 2025
+- **Deployment Date**: December 7, 2025
+- **Deployment Type**: Serverless (AWS Lambda with Function URL)
 
-### **VPC Infrastructure (Terraform)**
-| Resource | ID/Value | Details |
-|----------|----------|---------|
-| VPC | vpc-09e36bc10493d4534 | 10.0.0.0/16 CIDR |
-| Public Subnet 1 | subnet-005455db03caf1d67 | 10.0.1.0/24, us-east-2a |
-| Public Subnet 2 | subnet-0e65b006d61c61227 | 10.0.2.0/24, us-east-2b |
-| Private Subnet 1 | subnet-0c6df6c1c5a9f4eca | 10.0.10.0/24, us-east-2a |
-| Private Subnet 2 | subnet-0ef57b60bae69f1d2 | 10.0.11.0/24, us-east-2b |
-| Internet Gateway | igw-* | Attached to VPC |
-| NAT Gateway | nat-* | EIP: 18.220.153.245 |
-| ALB Security Group | sg-009be60401d3e7294 | Ports 80, 443 |
-| EC2 Security Group | sg-021f21d7a61e9e0ae | Port 22, 3000 |
-| RDS Security Group | sg-0adc8983160f4d59e | Port 5432 |
-| Lambda Security Group | sg-0ada661159d6087ab | Outbound only |
-
-### **EC2 Application (CloudFormation)**
+### **Lambda Function**
 | Component | Value | Details |
 |-----------|-------|---------|
-| **Instance ID** | i-0784fd62b72496655 | Running |
-| **Instance Type** | t3.micro | 2 vCPU, 1 GB RAM |
-| **AMI** | Amazon Linux 2023 | ami-0490fddec0cbeb88b |
-| **Public IP** | 3.16.130.8 | Elastic IP not configured |
-| **Public DNS** | ec2-3-16-130-8.us-east-2.compute.amazonaws.com | |
-| **Application URL** | https://3.16.130.8:3000 | Self-signed SSL |
-| **IAM Role** | git-captain-prod-ec2-role | Systems Manager access |
-| **CloudWatch Agent** | Installed | Metrics & logs |
+| **Function Name** | git-captain | Active |
+| **Runtime** | Node.js 18.x | Latest stable |
+| **Memory** | 512 MB | Optimized for Express app |
+| **Timeout** | 30 seconds | For OAuth and GitHub API calls |
+| **Handler** | lambda-handler.handler | Monolithic Express application |
+| **Architecture** | x86_64 | Standard architecture |
+| **Package Type** | Zip | Deployed via CLI |
 
-### **RDS PostgreSQL (CloudFormation)**
+### **Function URL Configuration**
 | Component | Value | Details |
 |-----------|-------|---------|
-| **Stack Name** | git-captain-rds | CREATE_COMPLETE |
-| **Engine** | PostgreSQL 15 | Latest minor version |
-| **Instance Class** | db.t3.micro | Free tier eligible |
-| **Storage** | 20 GB GP2 | General Purpose SSD |
-| **Backup Retention** | 1 day | Free tier limit |
-| **Multi-AZ** | Disabled | Cost optimization |
-| **Encryption** | Enabled | At rest |
-| **Subnet Group** | Private subnets | us-east-2a, us-east-2b |
+| **Function URL** | https://joc2jtrmas2f3n75rwx5xtilka0ssomy.lambda-url.us-east-2.on.aws/ | Public endpoint |
+| **Auth Type** | NONE | Public access |
+| **CORS** | Enabled | AllowOrigin: *, AllowMethods: GET,POST,DELETE |
+| **Invoke Mode** | BUFFERED | Standard request/response |
 
-### **Lambda Function (CloudFormation)**
+### **IAM Role**
 | Component | Value | Details |
 |-----------|-------|---------|
-| **Stack Name** | git-captain-lambda | CREATE_COMPLETE |
-| **Function Name** | git-captain-s3-logger | |
-| **Runtime** | Python 3.9 | |
-| **Memory** | 128 MB | |
-| **Timeout** | 30 seconds | |
-| **Trigger** | S3 Event | On object creation |
-| **IAM Role** | Named role | CloudWatch logs access |
+| **Role Name** | git-captain-lambda-role | Lambda execution role |
+| **Managed Policies** | AWSLambdaBasicExecutionRole | CloudWatch Logs access |
+| **Trust Policy** | lambda.amazonaws.com | Standard Lambda service principal |
 
-### **Application Files Location**
-| Path | Description |
-|------|-------------|
-| `/opt/git-captain/` | Application root directory |
-| `/opt/git-captain/controllers/server.js` | Main Node.js application |
-| `/opt/git-captain/.env` | Environment configuration |
-| `/opt/git-captain/controllers/theKey.key` | SSL private key (self-signed) |
-| `/opt/git-captain/controllers/theCert.cert` | SSL certificate (self-signed) |
-| `/var/log/git-captain.log` | Application logs |
-| `/var/log/git-captain-error.log` | Error logs |
+### **Environment Variables**
+| Variable | Description | Source |
+|----------|-------------|--------|
+| `GITHUB_CLIENT_ID` | OAuth App Client ID | Ov23liLoGipH7oguOHql |
+| `GITHUB_CLIENT_SECRET` | OAuth App Secret | 94e85b2fb0261083d6585497cdd18a5a0685d8d6 |
+| `GITHUB_ORG_NAME` | Target GitHub Organization | ConfusedDeer |
+| `NODE_ENV` | Node.js environment | production |
+
+### **Dependencies (package.json)**
+| Package | Version | Purpose |
+|---------|---------|---------|
+| express | ^4.18.2 | Web framework |
+| serverless-http | ^3.2.0 | Lambda-Express adapter |
+| axios | ^1.6.0 | HTTP client for GitHub API |
+| body-parser | ^1.20.2 | Request body parsing |
 
 ## 🔄 Application Deployment Flow
 
 ```mermaid
 sequenceDiagram
     participant Dev as 👨‍💻 Developer
-    participant Git as 🐙 GitHub Repo
-    participant TF as 🏗️ Terraform
-    participant CF as ☁️ CloudFormation
-    participant EC2 as 🖥️ EC2 Instance
-    participant PM2 as ⚙️ PM2 Process Manager
-    participant App as 🚀 Git-Captain App
+    participant Local as 💻 Local Machine
+    participant AWS as ☁️ AWS CLI
+    participant Lambda as ⚡ Lambda Service
+    participant FnURL as 🌐 Function URL
+    participant GitHub as 🐙 GitHub OAuth
     
-    Note over Dev,App: Infrastructure Provisioning
-    Dev->>TF: terraform apply
-    TF->>TF: Create VPC, Subnets, Security Groups
-    TF->>TF: Store outputs in SSM Parameter Store
-    TF-->>Dev: VPC Infrastructure Ready
+    Note over Dev,GitHub: Initial Setup
+    Dev->>AWS: aws iam create-role<br/>git-captain-lambda-role
+    AWS-->>Dev: Role ARN created
     
-    Dev->>CF: Create RDS Stack
-    CF->>CF: Deploy PostgreSQL Database
-    CF-->>Dev: RDS Stack Complete
+    Dev->>AWS: aws iam attach-role-policy<br/>AWSLambdaBasicExecutionRole
+    AWS-->>Dev: Policy attached
     
-    Dev->>CF: Create Lambda Stack
-    CF->>CF: Deploy S3 Logger Function
-    CF-->>Dev: Lambda Stack Complete
+    Note over Dev,GitHub: Lambda Deployment
+    Dev->>Local: Compress-Archive<br/>lambda-handler.js + node_modules + public
+    Local-->>Dev: lambda-deployment.zip created
     
-    Dev->>CF: Create EC2 Stack
-    CF->>CF: Launch EC2 Instance
-    CF->>EC2: Run UserData Script
+    Dev->>AWS: aws lambda create-function<br/>--function-name git-captain<br/>--runtime nodejs18.x<br/>--handler lambda-handler.handler<br/>--memory-size 512<br/>--timeout 30
+    AWS->>Lambda: Deploy function package
+    Lambda-->>AWS: Function created
+    AWS-->>Dev: Function ARN returned
     
-    Note over EC2,App: Application Deployment
-    EC2->>EC2: Install Node.js, npm, PM2
-    EC2->>Git: git clone repository
-    EC2->>EC2: npm install dependencies
-    EC2->>EC2: Create .env file
-    EC2->>EC2: Generate SSL certificates
-    EC2->>PM2: Start application
-    PM2->>App: Launch server.js
-    App->>App: Load configuration
-    App->>App: Initialize middleware
-    App-->>EC2: Application running on port 3000
-    EC2-->>Dev: Stack Complete
+    Dev->>AWS: aws lambda create-function-url-config<br/>--auth-type NONE<br/>--cors AllowOrigin=*
+    AWS->>FnURL: Configure public HTTPS endpoint
+    FnURL-->>AWS: Function URL created
+    AWS-->>Dev: URL: joc2jtrmas2f3n75rwx5xtilka0ssomy...
     
-    Note over Dev,App: Health Check
-    Dev->>App: HTTPS GET /health
-    App-->>Dev: 200 OK {status: healthy}
+    Dev->>AWS: aws lambda update-function-configuration<br/>--environment Variables={...}
+    AWS->>Lambda: Set GITHUB_CLIENT_ID, CLIENT_SECRET, ORG_NAME, NODE_ENV
+    Lambda-->>Dev: Configuration updated
+    
+    Note over Dev,GitHub: Testing
+    Dev->>FnURL: GET /health
+    FnURL->>Lambda: Invoke function (cold start)
+    Lambda->>Lambda: Initialize Express app
+    Lambda-->>FnURL: {status: "healthy"}
+    FnURL-->>Dev: 200 OK
+    
+    Dev->>FnURL: GET /
+    FnURL->>Lambda: Invoke function (warm)
+    Lambda->>Lambda: Serve index.html + inject client_id
+    Lambda-->>FnURL: HTML page
+    FnURL-->>Dev: 200 OK
+    
+    Dev->>FnURL: Click Login → GitHub OAuth
+    FnURL->>GitHub: Redirect with client_id
+    GitHub-->>Dev: Authorization page
+    Dev->>GitHub: Approve access
+    GitHub->>FnURL: Callback with auth code
+    FnURL->>Lambda: POST /gitCaptain/getToken?code=...
+    Lambda->>GitHub: Exchange code for token
+    GitHub-->>Lambda: Access token
+    Lambda-->>FnURL: {statusCode: 200, body: "access_token=..."}
+    FnURL-->>Dev: Token received, show repos
 ```
 
 ## 🛡️ Security Architecture
@@ -209,95 +214,146 @@ sequenceDiagram
 ```mermaid
 graph TB
     subgraph "Network Security"
-        Internet[🌍 Internet]
-        IGW[🌐 Internet Gateway]
-        
-        subgraph "Public Access"
-            WebSG[🛡️ Web Security Group<br/>Inbound:<br/>• TCP 3000 (0.0.0.0/0)<br/>• TCP 443 (0.0.0.0/0)<br/>• TCP 80 (0.0.0.0/0)]
-        end
-        
-        subgraph "Private Access"
-            DBSG[🔒 Database Security Group<br/>Inbound:<br/>• TCP 5432 (from EC2 SG)<br/>Outbound: None]
-            LambdaSG[⚡ Lambda Security Group<br/>Outbound only]
-        end
+        Internet[🌍 Internet<br/>Public Access]
+        FnURL[🌐 Lambda Function URL<br/>HTTPS Only<br/>No WAF currently]
     end
     
-    subgraph "Application Security"
-        EC2[🖥️ EC2 Instance]
+    subgraph "Lambda Security"
+        subgraph "Execution Role"
+            IAM[🔐 IAM Role<br/>git-captain-lambda-role<br/>Least Privilege]
+            CWPolicy[📊 CloudWatch Logs<br/>Write access only]
+        end
         
-        subgraph "Instance Security"
-            IAM[🔐 IAM Instance Role<br/>• SSM Session Manager<br/>• CloudWatch Logs<br/>• Secrets Manager Read<br/>• S3 Read/Write]
-            SSL[🔒 SSL/TLS<br/>• Self-signed certificate<br/>• HTTPS on port 3000]
-            PM2[⚙️ PM2 Process Manager<br/>• Auto-restart<br/>• Log rotation]
+        subgraph "Function Security"
+            Runtime[🚀 Isolated Runtime<br/>Per-request container<br/>Read-only /var/task]
+            Env[🔒 Environment Variables<br/>Encrypted at rest<br/>OAuth credentials]
+            TmpFS[💾 /tmp Directory<br/>Writable, ephemeral<br/>10 GB limit]
         end
         
         subgraph "Application Security"
-            Helmet[🛡️ Helmet.js<br/>Security Headers]
-            CORS[🔗 CORS Protection]
-            RateLimit[⏱️ Rate Limiting<br/>• 200 req/15min general<br/>• 300 req/5min auth]
-            Validation[✅ Input Validation<br/>express-validator]
+            Express[⚙️ Express.js App<br/>No Helmet (incompatible)<br/>No Rate Limiting (stateless)]
+            Validation[✅ Input Validation<br/>Request body parsing<br/>Query parameter checks]
+            CORS[🌐 CORS<br/>AllowOrigin: *<br/>AllowMethods: GET,POST,DELETE]
         end
     end
     
     subgraph "Data Security"
-        RDS[🗄️ RDS Encrypted<br/>• At-rest encryption<br/>• SSL connections<br/>• Private subnet only]
-        Secrets[🔐 AWS Secrets Manager<br/>• GitHub credentials<br/>• API keys<br/>• Database passwords]
-        SSM[⚙️ SSM Parameter Store<br/>• Infrastructure IDs<br/>• Non-sensitive config]
+        subgraph "Secrets Management"
+            EnvVars[📝 Lambda Environment Variables<br/>• GITHUB_CLIENT_ID<br/>• GITHUB_CLIENT_SECRET<br/>• GITHUB_ORG_NAME<br/>Encrypted with AWS KMS]
+        end
+        
+        subgraph "Communication"
+            HTTPS[🔒 HTTPS/TLS<br/>AWS-managed certificate<br/>TLS 1.2+]
+            GitHub[🐙 GitHub API<br/>OAuth tokens<br/>HTTPS only]
+        end
     end
     
-    Internet --> IGW
-    IGW --> WebSG
-    WebSG --> EC2
-    EC2 --> IAM
-    EC2 --> SSL
-    EC2 --> PM2
-    EC2 --> Helmet
-    EC2 --> CORS
-    EC2 --> RateLimit
-    EC2 --> Validation
-    EC2 --> DBSG
-    DBSG --> RDS
-    EC2 --> Secrets
-    EC2 --> SSM
+    subgraph "Monitoring & Logging"
+        CloudWatch[📊 CloudWatch Logs<br/>/aws/lambda/git-captain<br/>Request/response logs<br/>Error tracking]
+    end
+    
+    Internet --> FnURL
+    FnURL --> IAM
+    IAM --> CWPolicy
+    IAM --> Runtime
+    Runtime --> Express
+    Runtime --> Env
+    Runtime --> TmpFS
+    Express --> Validation
+    Express --> CORS
+    Env --> EnvVars
+    Express --> HTTPS
+    HTTPS --> GitHub
+    Runtime --> CloudWatch
     
     classDef network fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
-    classDef instance fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef lambda fill:#fce4ec,stroke:#c2185b,stroke-width:2px
     classDef security fill:#fff3e0,stroke:#f57c00,stroke-width:2px
     classDef data fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef monitoring fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
     
-    class Internet,IGW,WebSG network
-    class EC2,IAM,SSL,PM2 instance
-    class Helmet,CORS,RateLimit,Validation,DBSG,LambdaSG security
-    class RDS,Secrets,SSM data
+    class Internet,FnURL network
+    class IAM,CWPolicy,Runtime,Env,TmpFS,Express,Validation,CORS lambda
+    class EnvVars,HTTPS,GitHub security
+    class CloudWatch monitoring
 ```
 
 ## 📊 Monitoring & Logging
 
 ```mermaid
 graph TB
-    subgraph "Application Monitoring"
-        App[🚀 Git-Captain Application]
+    subgraph "Lambda Execution"
+        Lambda[⚡ git-captain Lambda]
         
         subgraph "Application Logs"
-            AppLog[📝 Application Logs<br/>/var/log/git-captain.log]
-            ErrLog[❌ Error Logs<br/>/var/log/git-captain-error.log]
-            PM2Log[⚙️ PM2 Logs<br/>~/.pm2/logs/]
+            ConsoleLog[📝 console.log()<br/>Standard output]
+            ConsoleWarn[⚠️ console.warn()<br/>Warnings]
+            ConsoleError[❌ console.error()<br/>Errors & stack traces]
+        end
+        
+        subgraph "Request Tracking"
+            ReqLog[📊 Request logging<br/>Method, path, body]
+            RespLog[📤 Response logging<br/>Status code, body size]
+            Duration[⏱️ Execution duration<br/>Cold vs warm start]
         end
     end
     
     subgraph "AWS CloudWatch"
-        CW[☁️ CloudWatch]
+        CW[☁️ CloudWatch Service]
         
-        subgraph "Log Groups"
-            CWApp[📊 Application Logs<br/>/aws/ec2/git-captain]
-            CWInit[🔧 Instance Init<br/>/var/log/cloud-init-output.log]
-            CWSystem[💻 System Logs<br/>/var/log/messages]
+        subgraph "Log Streams"
+            LogGroup[📁 Log Group<br/>/aws/lambda/git-captain]
+            LogStream[📄 Log Streams<br/>YYYY/MM/DD/[$LATEST]requestId]
         end
         
         subgraph "Metrics"
-            CPUMetric[📈 CPU Utilization]
-            MemMetric[📊 Memory Usage]
-            DiskMetric[💾 Disk I/O]
+            Invocations[📊 Invocations<br/>Total function calls]
+            Errors[❌ Errors<br/>Function failures]
+            Duration2[⏱️ Duration<br/>Average execution time]
+            Throttles[🚫 Throttles<br/>Concurrent limit hits]
+            ColdStarts[❄️ Cold Starts<br/>Init duration tracking]
+        end
+        
+        subgraph "Insights"
+            LogInsights[🔍 CloudWatch Logs Insights<br/>Query and analyze logs]
+            Alarms[🚨 CloudWatch Alarms<br/>Error rate threshold]
+        end
+    end
+    
+    Lambda --> ConsoleLog
+    Lambda --> ConsoleWarn
+    Lambda --> ConsoleError
+    Lambda --> ReqLog
+    Lambda --> RespLog
+    Lambda --> Duration
+    
+    ConsoleLog --> LogGroup
+    ConsoleWarn --> LogGroup
+    ConsoleError --> LogGroup
+    ReqLog --> LogGroup
+    RespLog --> LogGroup
+    
+    LogGroup --> LogStream
+    LogGroup --> LogInsights
+    
+    Lambda --> Invocations
+    Lambda --> Errors
+    Lambda --> Duration2
+    Lambda --> Throttles
+    Lambda --> ColdStarts
+    
+    Errors --> Alarms
+    
+    classDef execution fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef logs fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef cloudwatch fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef metrics fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    
+    class Lambda execution
+    class ConsoleLog,ConsoleWarn,ConsoleError,ReqLog,RespLog,Duration logs
+    class CW,LogGroup,LogStream,LogInsights,Alarms cloudwatch
+    class Invocations,Errors,Duration2,Throttles,ColdStarts metrics
+```
             NetMetric[🌐 Network Traffic]
         end
         
@@ -351,142 +407,278 @@ graph TB
 
 ## 💰 Cost Optimization
 
-### Free Tier Resources (First 12 Months)
-- ✅ **EC2 t3.micro**: 750 hours/month free
-- ✅ **RDS db.t3.micro**: 750 hours/month free
-- ✅ **RDS Storage**: 20 GB free
-- ✅ **Lambda**: 1M requests/month free
-- ✅ **CloudWatch**: Basic monitoring free
-- ✅ **Systems Manager**: No charge
+### AWS Lambda Pricing (Always Free Tier)
+- ✅ **Lambda Requests**: 1M requests/month free forever
+- ✅ **Lambda Compute**: 400,000 GB-seconds free/month forever
+- ✅ **CloudWatch Logs**: 5 GB ingestion + 5 GB storage free
+- ✅ **Function URL**: No additional charge
 
-### Monthly Cost Estimate (After Free Tier)
-| Resource | Monthly Cost |
-|----------|--------------|
-| EC2 t3.micro | ~$7.50 |
-| RDS db.t3.micro | ~$12.50 |
-| RDS Storage 20GB | ~$2.30 |
-| NAT Gateway | ~$32.00 |
-| Data Transfer | ~$0-5 |
-| **Total** | **~$54-59/month** |
+### Current Monthly Cost Estimate
+| Resource | Usage | Cost |
+|----------|-------|------|
+| Lambda Invocations | ~5,000/month (estimated) | **$0.00** (within free tier) |
+| Lambda Compute (512MB, 500ms avg) | ~2,500 GB-seconds | **$0.00** (within free tier) |
+| CloudWatch Logs | ~500 MB/month | **$0.00** (within free tier) |
+| **Total** | | **$0.00/month** |
 
-### Cost Optimization Strategies
-1. **Stop instances when not in use** (development)
-2. **Use Spot Instances** for non-production
-3. **Enable RDS storage autoscaling** instead of over-provisioning
-4. **Use VPC Endpoints** instead of NAT Gateway (future)
-5. **Implement CloudFront** for static asset caching
-6. **Schedule automated stop/start** for off-hours
+### Cost Benefits vs EC2
+- **No infrastructure costs**: No EC2, RDS, NAT Gateway charges
+- **Pay only for usage**: No idle time charges
+- **Automatic scaling**: No over-provisioning
+- **No management overhead**: No patching, monitoring costs
+- **Estimated savings**: ~$54-59/month compared to EC2 deployment
+
+### Scaling Costs (Beyond Free Tier)
+| Monthly Requests | Compute Time | Estimated Cost |
+|------------------|--------------|----------------|
+| 1M (free tier) | 400K GB-sec | $0.00 |
+| 5M | 2M GB-sec | ~$3.60 |
+| 10M | 4M GB-sec | ~$7.50 |
+| 100M | 40M GB-sec | ~$75.00 |
 
 ## 🔄 Deployment Workflows
 
-### Initial Deployment
-```bash
-# 1. Deploy VPC Infrastructure
-cd terraform/
-terraform init
-terraform plan
-terraform apply
-
-# 2. Deploy RDS Database
-aws cloudformation create-stack \
-  --stack-name git-captain-rds \
-  --template-body file://cloudformation/rds.yaml \
-  --capabilities CAPABILITY_IAM \
+### Initial Lambda Deployment
+```powershell
+# 1. Create IAM Role
+aws iam create-role `
+  --role-name git-captain-lambda-role `
+  --assume-role-policy-document '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}' `
   --region us-east-2
 
-# 3. Deploy Lambda Function
-aws cloudformation create-stack \
-  --stack-name git-captain-lambda \
-  --template-body file://cloudformation/lambda-s3-logging.yaml \
-  --capabilities CAPABILITY_NAMED_IAM \
+# 2. Attach CloudWatch Logs Policy
+aws iam attach-role-policy `
+  --role-name git-captain-lambda-role `
+  --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole `
   --region us-east-2
 
-# 4. Deploy EC2 Application
-aws cloudformation create-stack \
-  --stack-name git-captain-ec2-simple \
-  --template-body file://cloudformation/ec2-simple.yaml \
-  --capabilities CAPABILITY_NAMED_IAM \
+# 3. Package Application
+Compress-Archive `
+  -Path lambda-handler.js, node_modules, public, package.json `
+  -DestinationPath lambda-deployment.zip `
+  -CompressionLevel Fastest `
+  -Force
+
+# 4. Create Lambda Function
+aws lambda create-function `
+  --function-name git-captain `
+  --runtime nodejs18.x `
+  --role arn:aws:iam::428207760450:role/git-captain-lambda-role `
+  --handler lambda-handler.handler `
+  --zip-file fileb://lambda-deployment.zip `
+  --memory-size 512 `
+  --timeout 30 `
+  --region us-east-2
+
+# 5. Create Function URL
+aws lambda create-function-url-config `
+  --function-name git-captain `
+  --auth-type NONE `
+  --cors AllowOrigins='*',AllowMethods='GET,POST,DELETE',AllowHeaders='Content-Type' `
+  --region us-east-2
+
+# 6. Add Public Access Permission
+aws lambda add-permission `
+  --function-name git-captain `
+  --statement-id FunctionURLAllowPublicAccess `
+  --action lambda:InvokeFunctionUrl `
+  --principal '*' `
+  --function-url-auth-type NONE `
+  --region us-east-2
+
+# 7. Set Environment Variables
+aws lambda update-function-configuration `
+  --function-name git-captain `
+  --environment Variables='{GITHUB_CLIENT_ID=Ov23liLoGipH7oguOHql,GITHUB_CLIENT_SECRET=94e85b2fb0261083d6585497cdd18a5a0685d8d6,GITHUB_ORG_NAME=ConfusedDeer,NODE_ENV=production}' `
   --region us-east-2
 ```
 
 ### Application Updates
-```bash
-# Connect via Systems Manager
-aws ssm start-session --target i-0784fd62b72496655 --region us-east-2
+```powershell
+# 1. Update Code
+Compress-Archive `
+  -Path lambda-handler.js, node_modules, public, package.json `
+  -DestinationPath lambda-deployment.zip `
+  -CompressionLevel Fastest `
+  -Force
 
-# Update application
-cd /opt/git-captain
-git pull origin feature/AWS
-npm install
-pm2 restart git-captain
+# 2. Deploy Update
+aws lambda update-function-code `
+  --function-name git-captain `
+  --zip-file fileb://lambda-deployment.zip `
+  --region us-east-2
+
+# 3. Verify Deployment
+aws lambda get-function `
+  --function-name git-captain `
+  --region us-east-2
 ```
 
-### Infrastructure Updates
-```bash
-# Update VPC infrastructure
-cd terraform/
-terraform plan
-terraform apply
-
-# Update CloudFormation stacks
-aws cloudformation update-stack \
-  --stack-name git-captain-ec2-simple \
-  --template-body file://cloudformation/ec2-simple.yaml \
-  --capabilities CAPABILITY_NAMED_IAM \
+### Configuration Updates
+```powershell
+# Update Environment Variables
+aws lambda update-function-configuration `
+  --function-name git-captain `
+  --environment Variables='{GITHUB_CLIENT_ID=new_value,...}' `
   --region us-east-2
+
+# Update Memory/Timeout
+aws lambda update-function-configuration `
+  --function-name git-captain `
+  --memory-size 1024 `
+  --timeout 60 `
+  --region us-east-2
+```
+
+### Monitoring & Debugging
+```powershell
+# View Recent Logs
+aws logs tail /aws/lambda/git-captain --follow --region us-east-2
+
+# Get Function Metrics
+aws cloudwatch get-metric-statistics `
+  --namespace AWS/Lambda `
+  --metric-name Invocations `
+  --dimensions Name=FunctionName,Value=git-captain `
+  --start-time (Get-Date).AddDays(-1) `
+  --end-time (Get-Date) `
+  --period 3600 `
+  --statistics Sum `
+  --region us-east-2
+
+# Invoke Function Directly (Testing)
+aws lambda invoke `
+  --function-name git-captain `
+  --payload '{\"httpMethod\":\"GET\",\"path\":\"/health\"}' `
+  --region us-east-2 `
+  response.json
+
+# View response
+Get-Content response.json
 ```
 
 ## 🚨 Troubleshooting
 
-### Common Issues
+### Common Lambda Issues
 
-**Application not responding on port 3000:**
-```bash
-# Check PM2 status
-export HOME=/root
-pm2 list
-pm2 logs git-captain
+**Function timing out:**
+```powershell
+# Check timeout setting
+aws lambda get-function-configuration `
+  --function-name git-captain `
+  --region us-east-2 `
+  --query 'Timeout'
 
-# Check if port is listening
-netstat -tlnp | grep 3000
-ss -tlnp | grep 3000
-
-# Restart application
-pm2 restart git-captain
-```
-
-**SSL/TLS connection issues:**
-```bash
-# Regenerate self-signed certificates
-cd /opt/git-captain
-openssl req -x509 -newkey rsa:2048 -nodes \
-  -keyout controllers/theKey.key \
-  -out controllers/theCert.cert \
-  -days 365 -subj '/CN=git-captain'
-
-# Restart application
-pm2 restart git-captain
-```
-
-**Cannot access EC2 instance:**
-```bash
-# Use Systems Manager Session Manager (no SSH key needed)
-aws ssm start-session --target i-0784fd62b72496655 --region us-east-2
-
-# Check security group rules
-aws ec2 describe-security-groups \
-  --group-ids sg-021f21d7a61e9e0ae \
+# Increase timeout if needed
+aws lambda update-function-configuration `
+  --function-name git-captain `
+  --timeout 60 `
   --region us-east-2
 ```
 
+**Out of memory errors:**
+```powershell
+# Check memory usage in CloudWatch
+aws cloudwatch get-metric-statistics `
+  --namespace AWS/Lambda `
+  --metric-name MemoryUtilization `
+  --dimensions Name=FunctionName,Value=git-captain `
+  --start-time (Get-Date).AddHours(-1) `
+  --end-time (Get-Date) `
+  --period 300 `
+  --statistics Maximum `
+  --region us-east-2
+
+# Increase memory if needed
+aws lambda update-function-configuration `
+  --function-name git-captain `
+  --memory-size 1024 `
+  --region us-east-2
+```
+
+**GitHub OAuth not working:**
+```powershell
+# Verify environment variables
+aws lambda get-function-configuration `
+  --function-name git-captain `
+  --region us-east-2 `
+  --query 'Environment.Variables'
+
+# Update if incorrect
+aws lambda update-function-configuration `
+  --function-name git-captain `
+  --environment Variables='{GITHUB_CLIENT_ID=correct_value,...}' `
+  --region us-east-2
+```
+
+**Function URL not accessible:**
+```powershell
+# Check Function URL configuration
+aws lambda get-function-url-config `
+  --function-name git-captain `
+  --region us-east-2
+
+# Verify public access permission
+aws lambda get-policy `
+  --function-name git-captain `
+  --region us-east-2
+```
+
+**Cold start latency:**
+- **Current**: 512 MB memory, typically 1-2s cold start
+- **Mitigation**: 
+  - Increase memory allocation (more CPU = faster init)
+  - Use Provisioned Concurrency (additional cost)
+  - Keep functions warm with scheduled pings
+
+### Viewing Logs
+```powershell
+# Stream live logs
+aws logs tail /aws/lambda/git-captain --follow --region us-east-2
+
+# Query specific errors
+aws logs filter-log-events `
+  --log-group-name /aws/lambda/git-captain `
+  --filter-pattern "ERROR" `
+  --start-time ((Get-Date).AddHours(-1).ToUniversalTime().Subtract([datetime]'1970-01-01').TotalMilliseconds) `
+  --region us-east-2
+
+# Get last 50 log events
+aws logs tail /aws/lambda/git-captain --since 1h --region us-east-2
+```
+
+## 🔮 Future Enhancements
+
+### Planned: Microservices Architecture
+Branch: `feature/seperateLamdaFunctions`
+
+Split monolithic Lambda into 4 microservices with API Gateway:
+- **web-server** - Static content and OAuth pages
+- **auth-service** - OAuth token exchange
+- **repo-service** - Repository operations
+- **branch-service** - Branch and PR operations
+
+Benefits:
+- Independent scaling per service
+- Better fault isolation
+- More granular monitoring
+- Easier to update individual services
+
+### Additional Improvements
+- **CloudFront CDN**: Cache static assets, reduce Lambda invocations
+- **WAF Integration**: Add Web Application Firewall for security
+- **API Gateway**: Rate limiting, API keys, usage plans
+- **Secrets Manager**: Move credentials from environment variables
+- **X-Ray Tracing**: Distributed tracing for debugging
+- **Lambda Layers**: Share common dependencies across functions
+
 ## 📚 Related Documentation
 
-- [AWS Deployment Checklist](../../AWS_DEPLOYMENT_CHECKLIST.md)
-- [AWS Implementation Summary](../../AWS_IMPLEMENTATION_SUMMARY.md)
-- [AWS Quick Reference](../../AWS_QUICK_REFERENCE.md)
-- [Deployment Summary](../../DEPLOYMENT_SUMMARY.md)
-- [Main Architecture](../ARCHITECTURE.md)
+- [Main Architecture](../ARCHITECTURE.md) - Overall system architecture
+- [Architecture Diagrams](../ARCHITECTURE_MERMAID.md) - Mermaid diagram collection
+- [Lambda Deployment Guide](../../LAMBDA_DEPLOYMENT.md) - Detailed deployment steps
+- [Serverless Migration](../../SERVERLESS_MIGRATION_SUMMARY.md) - EC2 to Lambda migration notes
 
 ---
 
-*AWS Architecture documented for Git-Captain v2.0 AWS deployment completed December 2, 2025*
+*AWS Lambda Architecture documented for Git-Captain v2.0 - Deployed December 7, 2025*
