@@ -1,0 +1,83 @@
+{
+  "name": "git-captain",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Makes handling multiple Git Repos for the same project easier. Modernized with security enhancements.",
+  "main": "controllers/server.js",
+  "scripts": {
+    "start": "node controllers/server.js",
+    "dev": "nodemon controllers/server.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint controllers/ public/js/ --fix",
+    "security-audit": "npm audit",
+    "update-deps": "npm update"
+  },
+  "repository": {
+    "type": "git",
+    "url": "Git-Captain"
+  },
+  "keywords": [
+    "git",
+    "repository",
+    "branch",
+    "management",
+    "github",
+    "oauth",
+    "nodejs",
+    "express"
+  ],
+  "author": "Joe Tavarez",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.670.0",
+    "@aws-sdk/client-s3": "^3.670.0",
+    "axios": "^1.10.0",
+    "body-parser": "^1.20.3",
+    "compression": "^1.8.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "express-rate-limit": "^6.11.2",
+    "express-validator": "^7.2.1",
+    "helmet": "^7.2.0",
+    "joi": "^17.13.3",
+    "morgan": "^1.10.0",
+    "serverless-http": "^3.2.0",
+    "winston": "^3.17.0",
+    "winston-cloudwatch": "^6.3.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1",
+    "eslint-config-standard": "^17.1.0",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-promise": "^6.6.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.10",
+    "supertest": "^6.3.4"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "collectCoverage": true,
+    "coverageDirectory": "coverage",
+    "coverageReporters": [
+      "text",
+      "lcov",
+      "html"
+    ]
+  },
+  "eslintConfig": {
+    "extends": "standard",
+    "env": {
+      "node": true,
+      "es6": true,
+      "jest": true
+    }
+  }
+}

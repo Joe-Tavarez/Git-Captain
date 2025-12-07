@@ -7,8 +7,11 @@ const winston = require('winston');
 const path = require('path');
 const fs = require('fs');
 
-// Ensure logs directory exists
-const logsDir = path.join(__dirname, '..', 'logs');
+// Ensure logs directory exists (use /tmp in Lambda)
+const logsDir = process.env.AWS_LAMBDA_FUNCTION_NAME 
+    ? '/tmp/logs' 
+    : path.join(__dirname, '..', 'logs');
+
 if (!fs.existsSync(logsDir)) {
     fs.mkdirSync(logsDir, { recursive: true });
 }
