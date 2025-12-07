@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html">
+
+    <title>Git-Captain</title>
+    <meta name="author" content="Joe Tavarez">
+    <link rel="stylesheet" type="text/css" media="all" href="/static/css/styles.css">
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/images/favicon.ico">
+    <script type="text/javascript" src="/static/js/jquery-3.3.1.min.js"></script>
+    <script type="text/javascript" src="/static/js/viewUtils.js"></script>
+    <script type="text/javascript" src="/static/js/branchUtils.js"></script>
+    <script type="text/javascript" src="/static/js/tools.js"></script>
+</head>
+
+<body>
+
+<header class="Header  f5" role="banner">
+    <div id="profile" style="float:right; width:100%; vertical-align:top;">
+        <div id="apiData" style="float:right; width:100%"></div>
+    </div>
+</header>
+
+<!-- <center>
+    <blockquote style="float:left; margin-left: 10px;">
+         <img itemprop="image" style="margin-left:auto; margin-right:auto;" src="[your org emblem source here]" alt="@orgName">
+        <br>
+        <a href="https://github.com/[orgName]" target="_blank" data-name="orgName" style="margin-left: auto; margin-right:auto;">
+            My orgName
+        </a>
+    </blockquote>
+</center> -->
+
+<div id="modalSpinner" class="loading" style="display: none;">Loading&#8230;</div>
+
+<div id="loading">
+    <div style="text-align: center;"><h1><i class="fa fa-spinner fa-spin"></i>Getting GitHub Access Token...</h1></div>
+    <script>
+    </script>
+</div>
+<div id="authDiv" style="display:none; margin-top:20px;">
+    <div style="text-align: center;"><h1>Authenticated: Git-Captain</h1>
+        <p>We've successfully authenticated to GitHub and obtained an OAuth token!</p>
+        <div id="operation">
+            <input id="create" type="radio" value="create" name="radioOp" onchange="toggleViews();" checked/>
+            <label for="create">Create New Branches</label>
+
+            <input id="delete" type="radio" value="delete" name="radioOp" onchange="toggleViews();"/>
+            <label for="delete">Cleanup existing branches</label>
+
+            <input id="findBranches" type="radio" value="findBranches" name="radioOp" onchange="toggleViews();"/>
+            <label for="findBranches">Find Branches</label>
+
+            <input id="findPullRequests" type="radio" value="findPullRequests" name="radioOp"
+                   onchange="toggleViews();"/>
+            <label for="findPullRequests">Find Open Pull Requests</label>
+        </div>
+
+        <div id="branchMaker" onchange="buildTypeChange();" style="margin: 10px 0 10px 0;">
+            <p>Your selection will affect the following repositories</p>
+            <div></div>
+            <ul id="repoUl" class="checkbox-grid"></ul>
+            <input class="form-control input-lg input-block input-contrast required valid title js-quick-submit js-session-resumable"
+                   placeholder="Branch From..." aria-label="Title" autofocus="autofocus" autocomplete="off"
+                   required="required" type="text" name="refBranch" id="refBranch">
+
+            <input name="newBranch" id="newBranch"
+                   class="form-control input-lg input-block input-contrast required valid title js-quick-submit js-session-resumable"
+                   placeholder="New branch name" aria-label="Title" autofocus="autofocus" autocomplete="off"
+                   required="required" type="text">
+            <button onclick="prepareForBranchCreation();" type="submit" class="btn btn-primary" data-disable-invalid=""
+                    data-disable-with="">Create Branches
+            </button>
+        </div>
+
+        <div id="branchDeleter" style="display:none; margin: 10px 0 10px 0;">
+            <input id="deleteInput" name="deleteInput"
+                   class="form-control input-lg input-block input-contrast required valid title js-quick-submit js-session-resumable"
+                   placeholder="Branch to delete" aria-label="Title" autofocus="autofocus" autocomplete="off"
+                   required="required" type="text">
+            <button onclick="prepareForBranchDeletion(arrayOfRepos);" id="deleteBranch" type="submit"
+                    class="btn btn-primary"
+                    data-disable-invalid="" data-disable-with="">Delete
+            </button>
+        </div>
+
+        <div id="branchFinder" style="display:none; margin: 10px 0 10px 0;">
+            <input name="searchInput" id="searchInput"
+                   class="form-control input-lg input-block input-contrast required valid title js-quick-submit js-session-resumable"
+                   placeholder="Branch to find" aria-label="Title" autofocus="autofocus" autocomplete="off"
+                   required="required" type="text">
+            <button onclick="prepareForBranchSearch();" id="SearchForBranch" type="submit"
+                    class="btn btn-primary"
+                    data-disable-invalid="" data-disable-with="">Search
+            </button>
+        </div>
+
+        <div id="pullRequestFinder" style="display:none; margin: 10px 0 10px 0;">
+            <input name="searchPRinput" id="searchPRinput"
+                   class="form-control input-lg input-block input-contrast required valid title js-quick-submit js-session-resumable"
+                   placeholder="PR merge TO branch" aria-label="Title" autofocus="autofocus" autocomplete="off"
+                   required="required" type="text">
+            <button onclick="prepareForPRSearch();" id="searchForPullRequest" type="submit"
+                    class="btn btn-primary"
+                    data-disable-invalid="" data-disable-with="">Search
+            </button>
+        </div>
+
+    </div>
+
+</div>
+
+<div id="errorDiv" style="display:none;">
+    <h1>Something went wrong...</h1>
+</div>
+
+<button id="clearLogButton" onclick="clearLog();" type="submit" style="margin:0 0 5px 5px;  background: #dddddd"
+        class="btn btn-sm" data-disable-invalid="" data-disable-with="">Clear Log
+</button>
+
+<div id="logTableDiv">
+    <table id="logTable" style="font-size:10pt;">
+        <tr>
+            <th>Number</th>
+            <th>Action</th>
+            <th>Repo</th>
+            <th>Branch</th>
+            <th>Result</th>
+        </tr>
+    </table>
+</div>
+
+<script type="text/javascript">
+
+    $(document).ready(function () {
+        initJquerySelectors('authenticated');
+        authCode = getAuthCode(window.location.href);
+        showSpinner();
+        isGitCaptainUp();
+        getAccessToken();
+        buildTypeChange();
+    });
+
+    $(document).click(function () {
+        setTimeoutTimer();
+    });
+
+
+</script>
+</body>
+</html>

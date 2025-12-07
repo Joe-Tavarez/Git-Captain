@@ -1,0 +1,168 @@
+name: Deploy Application
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'controllers/**'
+      - 'public/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/deploy-application.yml'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-2
+  ASG_NAME: git-captain-prod-asg
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Application Update
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update Secrets Manager
+        run: |
+          python3 boto3-scripts/setup_secrets.py
+
+      - name: Upload Static Assets to S3
+        run: |
+          aws s3 sync public/ s3://git-captain-static-assets/public/ \
+            --delete \
+            --cache-control "max-age=86400" \
+            --exclude "*.html"
+
+      - name: Upload deployment script to S3
+        run: |
+          aws s3 cp ec2-scripts/app-update.sh s3://git-captain-static-assets/scripts/app-update.sh
+
+      - name: Trigger Auto Scaling Group Instance Refresh
+        run: |
+          # Get Auto Scaling Group name
+          ASG_NAME=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-ec2-asg \
+            --query 'Stacks[0].Outputs[?OutputKey==`AutoScalingGroupName`].OutputValue' \
+            --output text)
+          
+          echo "Starting instance refresh for ASG: $ASG_NAME"
+          
+          # Start instance refresh
+          aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name $ASG_NAME \
+            --preferences '{
+              "MinHealthyPercentage": 50,
+              "InstanceWarmup": 300
+            }'
+          
+          echo "Instance refresh started successfully"
+
+      - name: Run Update Script on Running Instances
+        run: |
+          # Get instance IDs from Auto Scaling Group
+          INSTANCE_IDS=$(aws ec2 describe-instances \
+            --filters "Name=tag:aws:autoscaling:groupName,Values=$ASG_NAME" \
+                      "Name=instance-state-name,Values=running" \
+            --query 'Reservations[*].Instances[*].InstanceId' \
+            --output text)
+          
+          if [ -z "$INSTANCE_IDS" ]; then
+            echo "No running instances found"
+            exit 0
+          fi
+          
+          echo "Updating instances: $INSTANCE_IDS"
+          
+          # Run update script via SSM
+          for instance_id in $INSTANCE_IDS; do
+            echo "Running update on $instance_id..."
+            aws ssm send-command \
+              --instance-ids "$instance_id" \
+              --document-name "AWS-RunShellScript" \
+              --parameters 'commands=[
+                "cd /opt/git-captain",
+                "git pull origin master",
+                "npm install --production",
+                "pm2 reload git-captain --update-env"
+              ]' \
+              --timeout-seconds 600 \
+              --region ${{ env.AWS_REGION }}
+          done
+
+      - name: Wait for Deployment to Complete
+        run: |
+          echo "Waiting 60 seconds for deployment to propagate..."
+          sleep 60
+
+      - name: Health Check
+        run: |
+          # Get ALB DNS name
+          ALB_DNS=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-ec2-asg \
+            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
+            --output text)
+          
+          echo "Checking application health at: https://$ALB_DNS/health"
+          
+          # Perform health check
+          response=$(curl -s -o /dev/null -w "%{http_code}" https://$ALB_DNS/health || echo "000")
+          
+          if [ "$response" = "200" ]; then
+            echo "✓ Health check passed!"
+          else
+            echo "✗ Health check failed with status: $response"
+            exit 1
+          fi
+
+      - name: Smoke Tests
+        run: |
+          ALB_DNS=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-ec2-asg \
+            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
+            --output text)
+          
+          echo "Running smoke tests..."
+          
+          # Test status endpoint
+          status_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            https://$ALB_DNS/gitCaptain/checkGitCaptainStatus)
+          
+          if [ "$status_code" = "200" ]; then
+            echo "✓ Status endpoint working"
+          else
+            echo "✗ Status endpoint failed: $status_code"
+            exit 1
+          fi
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "## Application Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          ALB_DNS=$(aws cloudformation describe-stacks \
+            --stack-name git-captain-ec2-asg \
+            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
+            --output text)
+          
+          echo "- **Application URL**: https://$ALB_DNS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment Time**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Health Status" >> $GITHUB_STEP_SUMMARY
+          
+          health_response=$(curl -s https://$ALB_DNS/health | jq -r '.status' || echo "unhealthy")
+          echo "- Status: $health_response" >> $GITHUB_STEP_SUMMARY

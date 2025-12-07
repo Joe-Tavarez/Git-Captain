@@ -1,0 +1,300 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Git-Captain Serverless Application
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: nodejs18.x
+    MemorySize: 512
+    Environment:
+      Variables:
+        NODE_ENV: production
+        GITHUB_ORG_NAME: !Ref GitHubOrgName
+        GIT_CAPTAIN_STATUS: up
+        GIT_CAPTAIN_REASON: Service is operational
+        TIMEOUT_MINUTES: 25
+        RATE_LIMIT_WINDOW: 60000
+        RATE_LIMIT_MAX: 60
+        SESSION_TIMEOUT: 1800000
+    Architectures:
+      - x86_64
+
+Parameters:
+  GitHubClientId:
+    Type: String
+    Description: GitHub OAuth Client ID
+    NoEcho: true
+  GitHubClientSecret:
+    Type: String
+    Description: GitHub OAuth Client Secret
+    NoEcho: true
+  GitHubOrgName:
+    Type: String
+    Description: GitHub Organization or Username
+    Default: ConfusedDeer
+  DomainName:
+    Type: String
+    Description: Custom domain name (optional)
+    Default: ''
+
+Conditions:
+  HasDomainName: !Not [!Equals [!Ref DomainName, '']]
+
+Resources:
+  # API Gateway
+  GitCaptainApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: git-captain-api
+      StageName: prod
+      Cors:
+        AllowMethods: "'GET,POST,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+      Auth:
+        ApiKeyRequired: false
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+
+  # S3 Bucket for Static Assets
+  StaticAssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'git-captain-static-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: 404.html
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - '*'
+            AllowedMethods:
+              - GET
+              - HEAD
+            AllowedHeaders:
+              - '*'
+
+  StaticAssetsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StaticAssetsBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub '${StaticAssetsBucket.Arn}/*'
+
+  # CloudFront Distribution
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Git-Captain Static Assets CDN
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt StaticAssetsBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+          - Id: ApiOrigin
+            DomainName: !Sub '${GitCaptainApi}.execute-api.${AWS::Region}.amazonaws.com'
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        CacheBehaviors:
+          - PathPattern: /prod/*
+            TargetOriginId: ApiOrigin
+            ViewerProtocolPolicy: https-only
+            AllowedMethods:
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS
+              - PATCH
+              - POST
+              - PUT
+            CachedMethods:
+              - GET
+              - HEAD
+            ForwardedValues:
+              QueryString: true
+              Headers:
+                - Authorization
+                - Content-Type
+              Cookies:
+                Forward: all
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 404
+            ResponsePagePath: /views/404.html
+
+  # Secrets Manager for GitHub OAuth
+  GitHubSecretsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: git-captain/github-oauth
+      Description: GitHub OAuth credentials for Git-Captain
+      SecretString: !Sub |
+        {
+          "client_id": "${GitHubClientId}",
+          "client_secret": "${GitHubClientSecret}"
+        }
+
+  # Lambda Functions
+  HealthCheckFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: git-captain-health-check
+      CodeUri: lambda/
+      Handler: health.handler
+      Events:
+        HealthCheck:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GitCaptainApi
+            Path: /health
+            Method: get
+
+  GitHubOAuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: git-captain-github-oauth
+      CodeUri: lambda/
+      Handler: oauth.handler
+      Environment:
+        Variables:
+          SECRETS_ARN: !Ref GitHubSecretsSecret
+      Policies:
+        - SecretsManagerReadWrite
+      Events:
+        GetToken:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GitCaptainApi
+            Path: /gitCaptain/getToken
+            Method: get
+
+  GitHubStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: git-captain-github-status
+      CodeUri: lambda/
+      Handler: status.handler
+      Events:
+        GitHubStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GitCaptainApi
+            Path: /gitCaptain/checkGitHubStatus
+            Method: get
+        GitCaptainStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GitCaptainApi
+            Path: /gitCaptain/checkGitCaptainStatus
+            Method: get
+
+  BranchOperationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: git-captain-branch-operations
+      CodeUri: lambda/
+      Handler: branches.handler
+      Environment:
+        Variables:
+          SECRETS_ARN: !Ref GitHubSecretsSecret
+      Policies:
+        - SecretsManagerReadWrite
+      Events:
+        PostOperations:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GitCaptainApi
+            Path: /{appName}/{webServ}
+            Method: post
+        ApiV1Operations:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GitCaptainApi
+            Path: /api/v1/{appName}/{webServ}
+            Method: post
+        DeleteOperations:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GitCaptainApi
+            Path: /{appName}/{webServ}
+            Method: delete
+        GetOperations:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GitCaptainApi
+            Path: /{appName}/{webServ}
+            Method: get
+
+  # CloudWatch Log Groups
+  HealthCheckLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${HealthCheckFunction}'
+      RetentionInDays: 7
+
+  GitHubOAuthLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${GitHubOAuthFunction}'
+      RetentionInDays: 7
+
+  GitHubStatusLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${GitHubStatusFunction}'
+      RetentionInDays: 7
+
+  BranchOperationsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${BranchOperationsFunction}'
+      RetentionInDays: 7
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${GitCaptainApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+  CloudFrontUrl:
+    Description: CloudFront distribution URL
+    Value: !GetAtt CloudFrontDistribution.DomainName
+  StaticAssetsBucket:
+    Description: S3 bucket for static assets
+    Value: !Ref StaticAssetsBucket
+  SecretsArn:
+    Description: Secrets Manager ARN
+    Value: !Ref GitHubSecretsSecret

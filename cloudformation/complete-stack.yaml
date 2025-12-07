@@ -1,0 +1,789 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Git-Captain Complete AWS Architecture - Academic Project
+  Deploys EC2 with ALB, Auto Scaling, RDS PostgreSQL, Lambda functions, and S3 integration
+  This template works with Terraform-provisioned networking infrastructure
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+  
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID from Terraform output
+  
+  PublicSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public Subnet 1 ID from Terraform output
+  
+  PublicSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public Subnet 2 ID from Terraform output
+  
+  PrivateSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private Subnet 1 ID from Terraform output
+  
+  PrivateSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private Subnet 2 ID from Terraform output
+  
+  PrivateSubnet3Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private Subnet 3 (RDS) ID from Terraform output
+  
+  PrivateSubnet4Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private Subnet 4 (RDS) ID from Terraform output
+  
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 Key Pair for SSH access
+  
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+    Description: Latest Amazon Linux 2 AMI
+  
+  GitHubClientId:
+    Type: String
+    Description: GitHub OAuth Client ID
+    NoEcho: true
+  
+  GitHubClientSecret:
+    Type: String
+    Description: GitHub OAuth Client Secret
+    NoEcho: true
+  
+  GitHubOrgName:
+    Type: String
+    Default: ConfusedDeer
+    Description: GitHub Organization/Username
+  
+  DBMasterUsername:
+    Type: String
+    Default: gitcaptain
+    Description: RDS master username
+    NoEcho: true
+  
+  DBMasterPassword:
+    Type: String
+    MinLength: 8
+    Description: RDS master password (minimum 8 characters)
+    NoEcho: true
+
+Mappings:
+  EnvironmentConfig:
+    dev:
+      InstanceType: t3.small
+      MinSize: 2
+      MaxSize: 4
+      DesiredCapacity: 2
+      DBInstanceClass: db.t3.micro
+    staging:
+      InstanceType: t3.medium
+      MinSize: 2
+      MaxSize: 6
+      DesiredCapacity: 2
+      DBInstanceClass: db.t3.small
+    prod:
+      InstanceType: t3.large
+      MinSize: 2
+      MaxSize: 10
+      DesiredCapacity: 4
+      DBInstanceClass: db.t3.medium
+
+Resources:
+  ###########################################
+  # Security Groups
+  ###########################################
+  
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${Environment}-git-captain-alb-sg
+      GroupDescription: Security group for Application Load Balancer
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTP from internet
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTPS from internet
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-git-captain-alb-sg
+  
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${Environment}-git-captain-ec2-sg
+      GroupDescription: Security group for EC2 instances
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: Allow traffic from ALB
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/16
+          Description: Allow SSH from VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-git-captain-ec2-sg
+  
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${Environment}-git-captain-rds-sg
+      GroupDescription: Security group for RDS PostgreSQL
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+          Description: Allow PostgreSQL from EC2
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+          Description: Allow PostgreSQL from Lambda
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-git-captain-rds-sg
+  
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${Environment}-git-captain-lambda-sg
+      GroupDescription: Security group for Lambda functions
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-git-captain-lambda-sg
+
+  ###########################################
+  # S3 Bucket for Static Assets and Logs
+  ###########################################
+  
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub git-captain-${Environment}-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: MoveOldLogsToGlacier
+            Status: Enabled
+            Prefix: logs/
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+            ExpirationInDays: 365
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt S3LoggerLambda.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-git-captain-bucket
+        - Key: Purpose
+          Value: Static assets and application logs
+
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub ${S3Bucket.Arn}/static/*
+
+  ###########################################
+  # Secrets Manager for GitHub OAuth
+  ###########################################
+  
+  GitHubSecretsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${Environment}/git-captain/github-oauth
+      Description: GitHub OAuth credentials for Git-Captain
+      SecretString: !Sub |
+        {
+          "client_id": "${GitHubClientId}",
+          "client_secret": "${GitHubClientSecret}"
+        }
+
+  ###########################################
+  # RDS PostgreSQL Database
+  ###########################################
+  
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub ${Environment}-git-captain-db-subnet-group
+      DBSubnetGroupDescription: Subnet group for RDS PostgreSQL
+      SubnetIds:
+        - !Ref PrivateSubnet3Id
+        - !Ref PrivateSubnet4Id
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-git-captain-db-subnet-group
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub ${Environment}-git-captain-db
+      Engine: postgres
+      EngineVersion: '15.4'
+      DBInstanceClass: !FindInMap [EnvironmentConfig, !Ref Environment, DBInstanceClass]
+      AllocatedStorage: 20
+      StorageType: gp3
+      StorageEncrypted: true
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterPassword
+      DBName: gitcaptain
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      MultiAZ: true
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: '03:00-04:00'
+      PreferredMaintenanceWindow: 'sun:04:00-sun:05:00'
+      EnableCloudwatchLogsExports:
+        - postgresql
+      DeletionProtection: false
+      PubliclyAccessible: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-git-captain-rds
+
+  ###########################################
+  # IAM Roles
+  ###########################################
+  
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${Environment}-git-captain-ec2-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${Environment}-git-captain-*
+                  - !Sub arn:aws:s3:::${Environment}-git-captain-*/*
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref GitHubSecretsSecret
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub ${Environment}-git-captain-ec2-profile
+      Roles:
+        - !Ref EC2InstanceRole
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${Environment}-git-captain-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${Environment}-git-captain-*
+                  - !Sub arn:aws:s3:::${Environment}-git-captain-*/*
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref GitHubSecretsSecret
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  ###########################################
+  # Lambda Functions
+  ###########################################
+  
+  S3LoggerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${Environment}-git-captain-s3-logger
+      Description: Logs S3 file uploads to CloudWatch
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          LOG_LEVEL: INFO
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          import boto3
+          from datetime import datetime
+          
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          def lambda_handler(event, context):
+              """
+              Lambda function to log S3 file uploads to CloudWatch Logs
+              Triggered by S3 ObjectCreated events
+              """
+              try:
+                  logger.info(f"S3 Event received: {json.dumps(event)}")
+                  
+                  for record in event['Records']:
+                      bucket = record['s3']['bucket']['name']
+                      key = record['s3']['object']['key']
+                      size = record['s3']['object']['size']
+                      event_time = record['eventTime']
+                      event_name = record['eventName']
+                      
+                      log_message = {
+                          'event': 'S3_FILE_UPLOAD',
+                          'timestamp': event_time,
+                          'bucket': bucket,
+                          'key': key,
+                          'size_bytes': size,
+                          'event_type': event_name
+                      }
+                      
+                      logger.info(f"File Upload Detected: {json.dumps(log_message)}")
+                      
+                      # Additional processing can be added here
+                      # For example: update database, send notifications, etc.
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps({
+                          'message': 'S3 upload logged successfully',
+                          'files_processed': len(event['Records'])
+                      })
+                  }
+              
+              except Exception as e:
+                  logger.error(f"Error processing S3 event: {str(e)}", exc_info=True)
+                  raise
+
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-git-captain-s3-logger
+
+  S3LoggerLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref S3LoggerLambda
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !GetAtt S3Bucket.Arn
+
+  ###########################################
+  # Application Load Balancer
+  ###########################################
+  
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${Environment}-git-captain-alb
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Subnets:
+        - !Ref PublicSubnet1Id
+        - !Ref PublicSubnet2Id
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-git-captain-alb
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${Environment}-git-captain-tg
+      Port: 3000
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      HealthCheckEnabled: true
+      HealthCheckPath: /health
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      TargetType: instance
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-git-captain-tg
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
+  ###########################################
+  # Launch Template and Auto Scaling
+  ###########################################
+  
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${Environment}-git-captain-lt
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: !FindInMap [EnvironmentConfig, !Ref Environment, InstanceType]
+        KeyName: !Ref KeyPairName
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -e
+            
+            # Update system
+            yum update -y
+            
+            # Install Node.js 18
+            curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+            yum install -y nodejs
+            
+            # Install Git
+            yum install -y git
+            
+            # Install CloudWatch agent
+            wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+            rpm -U ./amazon-cloudwatch-agent.rpm
+            
+            # Clone Git-Captain repository
+            cd /opt
+            git clone https://github.com/Joe-Tavarez/Git-Captain.git git-captain
+            cd git-captain
+            
+            # Install dependencies
+            npm install --production
+            
+            # Get secrets from Secrets Manager
+            SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id ${GitHubSecretsSecret} --region ${AWS::Region} --query SecretString --output text)
+            CLIENT_ID=$(echo $SECRET_JSON | jq -r '.client_id')
+            CLIENT_SECRET=$(echo $SECRET_JSON | jq -r '.client_secret')
+            
+            # Get RDS endpoint
+            DB_ENDPOINT="${RDSInstance.Endpoint.Address}"
+            
+            # Create .env file
+            cat > /opt/git-captain/.env << EOF
+            # GitHub OAuth Configuration
+            client_id=$CLIENT_ID
+            client_secret=$CLIENT_SECRET
+            
+            # GitHub Organization/Username
+            GITHUB_ORG_NAME=${GitHubOrgName}
+            
+            # Server Configuration
+            GIT_PORT_ENDPOINT=http://${ApplicationLoadBalancer.DNSName}
+            PORT=3000
+            
+            # Database Configuration
+            DB_HOST=$DB_ENDPOINT
+            DB_PORT=5432
+            DB_NAME=gitcaptain
+            DB_USER=${DBMasterUsername}
+            DB_PASSWORD=${DBMasterPassword}
+            
+            # Application Settings
+            GIT_CAPTAIN_STATUS=up
+            GIT_CAPTAIN_REASON=Service is operational
+            TIMEOUT_MINUTES=25
+            NODE_ENV=${Environment}
+            
+            # S3 Configuration
+            S3_BUCKET=${S3Bucket}
+            AWS_REGION=${AWS::Region}
+            EOF
+            
+            # Generate self-signed SSL certificate
+            mkdir -p /opt/git-captain/controllers
+            openssl req -x509 -newkey rsa:2048 -nodes \
+              -keyout /opt/git-captain/controllers/theKey.key \
+              -out /opt/git-captain/controllers/theCert.cert \
+              -days 365 \
+              -subj "/CN=${ApplicationLoadBalancer.DNSName}"
+            
+            # Install PM2 globally
+            npm install -g pm2
+            
+            # Start application with PM2
+            cd /opt/git-captain
+            pm2 start controllers/server.js --name git-captain
+            pm2 save
+            pm2 startup
+            
+            # Configure CloudWatch agent
+            cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json << CWCONFIG
+            {
+              "logs": {
+                "logs_collected": {
+                  "files": {
+                    "collect_list": [
+                      {
+                        "file_path": "/opt/git-captain/logs/*.log",
+                        "log_group_name": "/aws/ec2/git-captain",
+                        "log_stream_name": "{instance_id}"
+                      }
+                    ]
+                  }
+                }
+              },
+              "metrics": {
+                "namespace": "GitCaptain/EC2",
+                "metrics_collected": {
+                  "cpu": {
+                    "measurement": [{"name": "cpu_usage_idle", "rename": "CPU_IDLE", "unit": "Percent"}],
+                    "metrics_collection_interval": 60
+                  },
+                  "mem": {
+                    "measurement": [{"name": "mem_used_percent", "rename": "MEM_USED", "unit": "Percent"}],
+                    "metrics_collection_interval": 60
+                  }
+                }
+              }
+            }
+            CWCONFIG
+            
+            /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+              -a fetch-config \
+              -m ec2 \
+              -s \
+              -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json
+            
+            echo "Git-Captain deployment completed successfully!"
+        
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub ${Environment}-git-captain-ec2
+              - Key: Environment
+                Value: !Ref Environment
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub ${Environment}-git-captain-asg
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: !FindInMap [EnvironmentConfig, !Ref Environment, MinSize]
+      MaxSize: !FindInMap [EnvironmentConfig, !Ref Environment, MaxSize]
+      DesiredCapacity: !FindInMap [EnvironmentConfig, !Ref Environment, DesiredCapacity]
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-git-captain-asg-instance
+          PropagateAtLaunch: true
+        - Key: Environment
+          Value: !Ref Environment
+          PropagateAtLaunch: true
+
+  ScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 70.0
+
+  ###########################################
+  # CloudWatch Alarms
+  ###########################################
+  
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${Environment}-git-captain-high-cpu
+      AlarmDescription: Alert when CPU usage is high
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+
+  UnhealthyTargetsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${Environment}-git-captain-unhealthy-targets
+      AlarmDescription: Alert when targets are unhealthy
+      MetricName: UnHealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: TargetGroup
+          Value: !GetAtt ALBTargetGroup.TargetGroupFullName
+        - Name: LoadBalancer
+          Value: !GetAtt ApplicationLoadBalancer.LoadBalancerFullName
+
+Outputs:
+  ALBDNSName:
+    Description: DNS name of the Application Load Balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub ${Environment}-ALBDNSName
+
+  S3BucketName:
+    Description: S3 bucket name for static assets and logs
+    Value: !Ref S3Bucket
+    Export:
+      Name: !Sub ${Environment}-S3BucketName
+
+  RDSEndpoint:
+    Description: RDS PostgreSQL endpoint
+    Value: !GetAtt RDSInstance.Endpoint.Address
+    Export:
+      Name: !Sub ${Environment}-RDSEndpoint
+
+  RDSPort:
+    Description: RDS PostgreSQL port
+    Value: !GetAtt RDSInstance.Endpoint.Port
+    Export:
+      Name: !Sub ${Environment}-RDSPort
+
+  S3LoggerLambdaArn:
+    Description: ARN of S3 Logger Lambda function
+    Value: !GetAtt S3LoggerLambda.Arn
+    Export:
+      Name: !Sub ${Environment}-S3LoggerLambdaArn
+
+  AutoScalingGroupName:
+    Description: Name of the Auto Scaling Group
+    Value: !Ref AutoScalingGroup
+    Export:
+      Name: !Sub ${Environment}-AutoScalingGroupName
+
+  SecretsManagerArn:
+    Description: ARN of Secrets Manager secret
+    Value: !Ref GitHubSecretsSecret
+    Export:
+      Name: !Sub ${Environment}-SecretsManagerArn

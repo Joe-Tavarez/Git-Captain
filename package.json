@@ -35,6 +35,8 @@
     "npm": ">=8.0.0"
   },
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.670.0",
+    "@aws-sdk/client-s3": "^3.670.0",
     "axios": "^1.10.0",
     "body-parser": "^1.20.3",
     "compression": "^1.8.0",
@@ -46,7 +48,9 @@
     "helmet": "^7.2.0",
     "joi": "^17.13.3",
     "morgan": "^1.10.0",
-    "winston": "^3.17.0"
+    "serverless-http": "^3.2.0",
+    "winston": "^3.17.0",
+    "winston-cloudwatch": "^6.3.0"
   },
   "devDependencies": {
     "eslint": "^8.57.1",

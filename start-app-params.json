@@ -1,0 +1,5 @@
+{
+  "commands": [
+    "cat /opt/git-captain/.env"
+  ]
+}

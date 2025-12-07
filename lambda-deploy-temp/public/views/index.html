@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html">
+    <title>Git-Captain</title>
+    <link rel="stylesheet" type="text/css" media="all" href="/static/css/styles.css"/>
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/images/favicon.ico">
+    <script type="text/javascript" src="/static/js/jquery-3.3.1.min.js"></script>
+    <script type="text/javascript" src="/static/js/viewUtils.js"></script>
+    <script type="text/javascript" src="/static/js/tools.js"></script>
+</head>
+
+<body>
+<div id="loginDiv" style="margin-top:10px;">
+    <h1 id="loginHeader">Welcome to Git-Captain</h1>
+    <p id="loginInfo">Click the Login Button to authenticate to GitHub</p>
+    <button id="getUserAuth" onclick="getUserAuthCode()" type="submit" class="btn btn-primary" data-disable-invalid=""
+            data-disable-with="">Login
+    </button>
+</div>
+
+<div id="modalSpinner" class="loading" style="display: none;">Loading&#8230;</div>
+
+<script type="text/javascript">
+
+    $(document).ready(function () {
+        modalSpinner = $('#modalSpinner');
+        if (getUrlVars()["isTimedOut"]) {
+            alert("You have been logged off for inactivity!");
+        }
+
+        showSpinner();
+        isGitCaptainUp(true);
+
+    });
+
+    function getUrlVars() {
+        var vars = {};
+        var parts = window.location.href.replace(/[?&]+([^=&]+)=([^&]*)/gi, function (m, key, value) {
+            vars[key] = value;
+        });
+        return vars;
+    }
+</script>
+</body>
+</html>

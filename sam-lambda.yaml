@@ -1,0 +1,96 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Git-Captain - Serverless Lambda Deployment
+
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    Timeout: 30
+    MemorySize: 512
+    Tracing: Active
+    Environment:
+      Variables:
+        NODE_ENV: production
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+  GitHubClientId:
+    Type: String
+    NoEcho: true
+  GitHubClientSecret:
+    Type: String
+    NoEcho: true
+  GitHubOrgName:
+    Type: String
+    Default: ConfusedDeer
+
+Resources:
+  # API Gateway
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub ${Environment}-git-captain
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'*'"
+        AllowHeaders: "'*'"
+        AllowOrigin: "'*'"
+
+  # Main Lambda Function
+  GitCaptainFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${Environment}-git-captain
+      CodeUri: .
+      Handler: lambda-handler.handler
+      Environment:
+        Variables:
+          GITHUB_CLIENT_ID: !Ref GitHubClientId
+          GITHUB_CLIENT_SECRET: !Ref GitHubClientSecret
+          GITHUB_ORG_NAME: !Ref GitHubOrgName
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref GitHubSecret
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /{proxy+}
+            Method: ANY
+        RootEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /
+            Method: ANY
+
+  # Secrets Manager
+  GitHubSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${Environment}/git-captain/github
+      SecretString: !Sub |
+        {
+          "client_id": "${GitHubClientId}",
+          "client_secret": "${GitHubClientSecret}"
+        }
+
+  # CloudWatch Logs
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${Environment}-git-captain
+      RetentionInDays: 7
+
+Outputs:
+  ApiUrl:
+    Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/
+  FunctionArn:
+    Value: !GetAtt GitCaptainFunction.Arn

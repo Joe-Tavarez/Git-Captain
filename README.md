@@ -34,12 +34,61 @@ Git-Captain is a powerful web application that simplifies managing multiple GitH
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Deployment Options
+
+Git-Captain can be deployed in multiple ways to suit your needs:
+
+#### ⭐ Recommended: AWS Serverless (NEW!)
+**Zero server management, auto-scaling, $2/month**
+```powershell
+.\deploy-serverless.ps1
+```
+📖 [Serverless Quick Start](SERVERLESS_QUICKSTART.md) | [Full Guide](SERVERLESS_DEPLOYMENT.md)
+
+#### ☁️ AWS EC2/Infrastructure
+Traditional cloud deployment with Terraform/CloudFormation
+📖 [AWS Deployment Guide](docs/aws/AWS_ARCHITECTURE.md)
+
+#### 💻 Local Development
+Run on your local machine for development/testing
+📖 See [Local Installation](#local-installation) below
+
+---
+
+### Serverless Deployment (5 Minutes)
+
+The fastest way to get Git-Captain running in production:
+
+```bash
+# 1. Install Lambda dependencies
+cd lambda && npm install && cd ..
+
+# 2. Deploy with PowerShell script
+.\deploy-serverless.ps1
+
+# OR manually with SAM
+sam build && sam deploy --guided
+```
+
+**What you get:**
+- ✅ Auto-scaling Lambda functions
+- ✅ Global CDN via CloudFront  
+- ✅ 99.99% uptime
+- ✅ ~$2/month cost
+- ✅ Zero maintenance
+
+📖 **[Complete Serverless Guide →](SERVERLESS_DEPLOYMENT.md)**
+
+---
+
+### Local Installation
+
+#### Prerequisites
 - **Node.js 18+** 
 - **GitHub account** with repository access
 - **SSL certificates** (for HTTPS)
 
-### Installation
+#### Installation Steps
 
 1. **Clone the repository**
    ```bash
@@ -152,40 +201,20 @@ Git-Captain implements enterprise-grade security measures:
 
 ## 🏗️ Architecture Overview
 
-Git-Captain v2.0 features a modern, secure architecture built on Node.js and Express:
+Git-Captain v2.0 features a modern, secure architecture deployed on AWS infrastructure.
 
-```mermaid
-graph TB
-    User[👤 User] --> Browser[🌐 Browser]
-    Browser -->|HTTPS| Proxy[🔄 Reverse Proxy]
-    Proxy --> App[🚀 Git-Captain App<br/>Node.js + Express]
-    
-    App --> Security[🛡️ Security Layer<br/>Helmet + CORS + Rate Limiting]
-    App --> Auth[🔐 GitHub OAuth<br/>Authentication]
-    App --> API[🐙 GitHub API<br/>Repository Operations]
-    
-    App --> Logs[📄 Winston Logging]
-    App --> Static[📁 Static Assets]
-
-    classDef user fill:#e1f5fe
-    classDef app fill:#e8f5e8
-    classDef security fill:#fff3e0
-    classDef external fill:#fce4ec
-
-    class User,Browser user
-    class Proxy,App app
-    class Security,Auth security
-    class API,Logs,Static external
-```
+**[📊 View Architecture Diagram](docs/ARCHITECTURE.md#-high-level-architecture)**
 
 **Key Components:**
-- **Security-First Design**: Multiple layers of protection including rate limiting, input validation, and security headers
+- **AWS Infrastructure**: VPC with public/private subnets, EC2, RDS PostgreSQL, Lambda, CloudWatch
+- **Security-First Design**: Multiple layers including AWS Security Groups, rate limiting, input validation, and security headers
 - **OAuth Integration**: Seamless GitHub authentication with secure token handling
 - **Modern HTTP Client**: Axios-based client replacing deprecated request library
-- **Comprehensive Logging**: Winston-powered structured logging with rotation
-- **Production Ready**: Designed for scalability with PM2 process management
+- **Comprehensive Logging**: Winston-powered structured logging with CloudWatch integration
+- **Production Ready**: PM2 process management with auto-restart and monitoring
 
 📋 **Detailed Documentation:**
+- **[AWS Deployment Architecture](docs/aws/AWS_ARCHITECTURE.md)** - Complete AWS cloud infrastructure guide
 - **[System Architecture](docs/ARCHITECTURE.md)** - Complete architecture with interactive Mermaid diagrams
 - **[Architecture Tools](docs/ARCHITECTURE_TOOLS.md)** - Guide to various diagramming tools for GitHub
 - **[Deployment Guide](docs/DEPLOYMENT.md)** - Production deployment instructions
@@ -208,7 +237,7 @@ npm audit          # Security audit
 ```
 Git-Captain/
 ├── controllers/           # Backend logic
-│   ├── server.js         # Main server file
+│   ├── server.js         # Main server file (+/health endpoint)
 │   ├── config.js         # Configuration management
 │   ├── middleware.js     # Security middleware
 │   ├── validation.js     # Input validation schemas
@@ -221,6 +250,38 @@ Git-Captain/
 │   ├── images/          # Images and icons
 │   └── views/           # HTML templates
 ├── docs/                # Documentation
+│   └── aws/             # AWS deployment documentation
+│       ├── ARCHITECTURE.md      # AWS architecture + Mermaid diagram
+│       └── DEPLOYMENT_GUIDE.md  # Step-by-step AWS deployment
+├── terraform/           # Infrastructure as Code (Networking)
+│   ├── main.tf          # VPC orchestration
+│   ├── modules/         # Reusable Terraform modules
+│   │   ├── vpc/         # VPC, subnets, IGW, route tables
+│   │   ├── security-groups/  # ALB, EC2, RDS, Lambda SGs
+│   │   └── nat-gateway/ # NAT Gateway + EIP
+│   └── outputs.tf       # Export to AWS SSM Parameter Store
+├── cloudformation/      # Infrastructure as Code (Application Layer)
+│   ├── ec2-alb-autoscaling.yaml  # EC2, ALB, ASG, Launch Template
+│   ├── rds.yaml                  # PostgreSQL RDS + Secrets Manager
+│   ├── lambda-s3-logging.yaml    # Lambda S3 upload logger (Python)
+│   ├── cloudwatch-monitoring.yaml # Alarms, Dashboard, SNS
+│   └── waf.yaml                  # AWS WAF + rate limiting
+├── boto3-scripts/       # Python AWS automation
+│   ├── setup_secrets.py      # Secrets Manager setup
+│   ├── s3_manager.py         # S3 bucket operations
+│   ├── ec2_operations.py     # EC2/ASG management CLI
+│   ├── lambda_test.py        # Lambda testing utilities
+│   ├── requirements.txt      # Python dependencies
+│   └── README.md            # Boto3 scripts documentation
+├── ec2-scripts/         # EC2 bootstrap and deployment
+│   ├── user-data.sh     # EC2 initialization script
+│   ├── app-update.sh    # Application deployment script
+│   └── health-check.sh  # Health check script
+├── .github/             # CI/CD automation
+│   └── workflows/       # GitHub Actions workflows
+│       ├── deploy-infrastructure.yml  # Terraform + CloudFormation
+│       ├── deploy-application.yml     # App updates + ASG refresh
+│       └── test.yml                   # Linting, audits, IaC validation
 ├── logs/                # Application logs
 └── scripts/             # Utility scripts
 ```
@@ -238,7 +299,68 @@ npm start
 
 ### Production Options
 
-#### Option 1: Reverse Proxy (Recommended)
+#### Option 1: AWS Cloud Deployment (Recommended) ☁️
+
+**Complete Infrastructure as Code deployment** with Terraform and CloudFormation:
+
+```bash
+# Quick Deploy (Prerequisites: AWS CLI, Terraform, Python 3.9+)
+cd terraform && terraform init && terraform apply
+aws cloudformation deploy --template-file cloudformation/rds.yaml --stack-name git-captain-rds
+# ... continue with remaining stacks (see full guide below)
+```
+
+**AWS Infrastructure Features:**
+- ✅ **VPC with Multi-AZ**: 2 public + 2 private subnets across 2 availability zones
+- ✅ **Auto Scaling**: EC2 instances (t3.micro, 2-6 capacity) with Application Load Balancer
+- ✅ **RDS PostgreSQL**: db.t3.micro with automated backups and encryption
+- ✅ **S3 Buckets**: Static assets, application logs, SSL certificates
+- ✅ **AWS Lambda**: S3 upload logger (Python 3.11)
+- ✅ **CloudWatch**: Monitoring, alarms, and centralized logging
+- ✅ **AWS WAF**: Rate limiting (2000 req/5min) + managed rules
+- ✅ **Secrets Manager**: Secure environment variable storage
+- ✅ **CI/CD Pipeline**: GitHub Actions with OIDC authentication
+
+**Monthly Cost**: ~$93/month (t3.micro instances, db.t3.micro RDS, minimal data transfer)
+
+📋 **Complete AWS Documentation:**
+- **[AWS Architecture](docs/aws/ARCHITECTURE.md)** - Architecture diagram, component specs, cost analysis
+- **[AWS Deployment Guide](docs/aws/DEPLOYMENT_GUIDE.md)** - Step-by-step deployment (Console, CLI, Boto3)
+- **[Boto3 Scripts](boto3-scripts/README.md)** - Python automation tools for AWS operations
+
+**Quick AWS Setup:**
+```bash
+# 1. Store secrets in AWS Secrets Manager
+cd boto3-scripts
+python3 setup_secrets.py
+
+# 2. Deploy VPC networking with Terraform
+cd ../terraform
+terraform init
+terraform plan
+terraform apply
+
+# 3. Deploy application infrastructure with CloudFormation
+cd ../cloudformation
+aws cloudformation create-stack --stack-name git-captain-rds \
+  --template-body file://rds.yaml --capabilities CAPABILITY_IAM
+
+aws cloudformation create-stack --stack-name git-captain-ec2-alb \
+  --template-body file://ec2-alb-autoscaling.yaml --capabilities CAPABILITY_IAM
+
+# 4. Configure GitHub OAuth with ALB DNS name
+# 5. Access application via ALB DNS: http://git-captain-prod-alb-XXXX.us-east-2.elb.amazonaws.com
+```
+
+**Deployment Modes:**
+- **AWS Console**: Manual deployment via web interface (beginner-friendly)
+- **AWS CLI**: Command-line deployment with CloudFormation/Terraform (recommended)
+- **Boto3 Scripts**: Python automation for S3, EC2, Lambda, Secrets Manager operations
+- **GitHub Actions**: Automated CI/CD pipeline triggered by git push
+
+---
+
+#### Option 2: Reverse Proxy (Traditional)
 Use nginx or Apache to handle SSL and forward to port 3000:
 
 ```nginx
@@ -259,19 +381,7 @@ server {
 }
 ```
 
-#### Option 2: Docker
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-EXPOSE 3000
-CMD ["npm", "start"]
-```
-
-#### Option 3: Cloud Platforms
-- **AWS**: ECS + ALB or Elastic Beanstalk
+#### Option 3: Other Cloud Platforms
 - **Azure**: App Service or Container Instances  
 - **Google Cloud**: Cloud Run or Compute Engine
 - **Heroku**: Direct deployment with buildpacks
@@ -294,6 +404,21 @@ netsh advfirewall firewall add rule name="Git-Captain" dir=in action=allow proto
 ---
 
 ## 📋 Recent Updates (v2.0)
+
+### ☁️ **AWS Cloud Infrastructure (November 2025)**
+- ✅ **Complete AWS deployment solution** with Terraform + CloudFormation
+- ✅ **VPC networking with Multi-AZ architecture** (2 public + 2 private subnets)
+- ✅ **Auto Scaling EC2 instances** (2-6 t3.micro) behind Application Load Balancer
+- ✅ **RDS PostgreSQL database** (db.t3.micro) with automated backups + encryption
+- ✅ **S3 buckets** for static assets, logs, SSL certificates with lifecycle policies
+- ✅ **AWS Lambda S3 upload logger** (Python 3.11) with CloudWatch logging
+- ✅ **CloudWatch monitoring** with 7 alarms + custom dashboard
+- ✅ **AWS WAF** with rate limiting (2000 req/5min) + AWS managed rules
+- ✅ **AWS Secrets Manager** integration for secure credential storage
+- ✅ **GitHub Actions CI/CD** with OIDC authentication (no access keys)
+- ✅ **Boto3 automation scripts** (4 Python tools for AWS operations)
+- ✅ **Comprehensive AWS documentation** (architecture diagram + deployment guide)
+- ✅ **Health endpoint** (`/health`) for ALB health checks and monitoring
 
 ### 🔄 **Modernization (July 2025)**
 - ✅ **Removed deprecated `request` library** → Modern Axios HTTP client
@@ -394,12 +519,28 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ## 🏆 Built With
 
+### Application Stack
 - [Node.js](https://nodejs.org/) — JavaScript runtime
 - [Express.js](https://expressjs.com/) — Web framework
 - [GitHub API](https://docs.github.com/en/rest) — Repository integration
 - [Axios](https://axios-http.com/) — HTTP client
 - [Helmet.js](https://helmetjs.github.io/) — Security middleware
 - [Winston](https://github.com/winstonjs/winston) — Logging framework
+
+### AWS Infrastructure
+- [AWS VPC](https://aws.amazon.com/vpc/) — Network isolation with Multi-AZ architecture
+- [AWS EC2](https://aws.amazon.com/ec2/) — Auto Scaling compute instances (t3.micro)
+- [Application Load Balancer](https://aws.amazon.com/elasticloadbalancing/) — Traffic distribution + SSL termination
+- [Amazon RDS](https://aws.amazon.com/rds/) — PostgreSQL database (db.t3.micro)
+- [Amazon S3](https://aws.amazon.com/s3/) — Object storage for assets, logs, SSL certs
+- [AWS Lambda](https://aws.amazon.com/lambda/) — Serverless S3 upload logging (Python 3.11)
+- [Amazon CloudWatch](https://aws.amazon.com/cloudwatch/) — Monitoring, logs, alarms, dashboards
+- [AWS WAF](https://aws.amazon.com/waf/) — Web application firewall with rate limiting
+- [AWS Secrets Manager](https://aws.amazon.com/secrets-manager/) — Secure credential storage
+- [Terraform](https://www.terraform.io/) — Infrastructure as Code (networking layer)
+- [AWS CloudFormation](https://aws.amazon.com/cloudformation/) — Infrastructure as Code (application layer)
+- [Boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html) — AWS SDK for Python automation
+- [GitHub Actions](https://github.com/features/actions) — CI/CD pipeline with OIDC authentication
 
 ---
 
@@ -428,14 +569,24 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 - [ ] **Bulk repository creation**
 - [ ] **Advanced filtering and search**
 - [ ] **REST API for external integration**
-- [ ] **Docker Compose for easy deployment**
 - [ ] **Comprehensive test suite**
+- [ ] **Database integration** for operation history (RDS PostgreSQL schema ready)
 
 ### Long-term Goals
 - [ ] **Mobile-responsive PWA**
 - [ ] **Real-time collaboration features**
-- [ ] **Integration with CI/CD platforms**
+- [ ] **Integration with CI/CD platforms** (TeamCity, Jenkins, CircleCI)
 - [ ] **Advanced analytics and reporting**
+- [ ] **AWS API Gateway + Step Functions** integration
+- [ ] **Multi-region deployment** with Route 53 failover
+
+### Recently Completed ✅
+- [x] **AWS Cloud Deployment** - Complete IaC solution with Terraform + CloudFormation
+- [x] **Auto Scaling Infrastructure** - EC2 Auto Scaling + Application Load Balancer
+- [x] **Serverless Logging** - AWS Lambda S3 upload logger with CloudWatch
+- [x] **Comprehensive Monitoring** - CloudWatch alarms, dashboard, SNS notifications
+- [x] **CI/CD Pipeline** - GitHub Actions with automated infrastructure deployment
+- [x] **Security Hardening** - AWS WAF, Secrets Manager, Security Groups
 
 ---
 

@@ -75,6 +75,25 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 // Trust proxy for rate limiting and IP detection
 app.set('trust proxy', 1);
 
+////////////////////////////////////////////////////////////////Health Check Endpoint/////////////////////////////////////////////////////////////////////
+// Health check endpoint for ALB target group
+app.get('/health', (req, res) => {
+    const healthCheck = {
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        memory: {
+            used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+            total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+            rss: Math.round(process.memoryUsage().rss / 1024 / 1024)
+        },
+        environment: process.env.NODE_ENV || 'development',
+        version: '2.0.0'
+    };
+    
+    res.status(200).json(healthCheck);
+});
+
 ////////////////////////////////////////////////////////////////app.post starts/////////////////////////////////////////////////////////////////////
 // Main POST route for all gitCaptain endpoints
 app.post('/:appName/:webServ', 

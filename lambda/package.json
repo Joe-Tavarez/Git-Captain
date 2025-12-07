@@ -1,0 +1,16 @@
+{
+  "name": "git-captain-lambda",
+  "version": "2.0.0",
+  "description": "Git-Captain Lambda Functions",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.670.0",
+    "axios": "^1.10.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Joe Tavarez",
+  "license": "MIT"
+}
