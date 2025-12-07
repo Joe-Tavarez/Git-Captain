@@ -231,9 +231,9 @@ graph TB
         end
         
         subgraph "Application Security"
-            Express[⚙️ Express.js App<br/>No Helmet (incompatible)<br/>No Rate Limiting (stateless)]
-            Validation[✅ Input Validation<br/>Request body parsing<br/>Query parameter checks]
-            CORS[🌐 CORS<br/>AllowOrigin: *<br/>AllowMethods: GET,POST,DELETE]
+            Express["⚙️ Express.js App<br/>No Helmet - incompatible<br/>No Rate Limiting - stateless"]
+            Validation["✅ Input Validation<br/>Request body parsing<br/>Query parameter checks"]
+            CORS["🌐 CORS<br/>AllowOrigin: *<br/>AllowMethods: GET,POST,DELETE"]
         end
     end
     
@@ -286,9 +286,9 @@ graph TB
         Lambda[⚡ git-captain Lambda]
         
         subgraph "Application Logs"
-            ConsoleLog[📝 console.log()<br/>Standard output]
-            ConsoleWarn[⚠️ console.warn()<br/>Warnings]
-            ConsoleError[❌ console.error()<br/>Errors & stack traces]
+            ConsoleLog["📝 console.log<br/>Standard output"]
+            ConsoleWarn["⚠️ console.warn<br/>Warnings"]
+            ConsoleError["❌ console.error<br/>Errors & stack traces"]
         end
         
         subgraph "Request Tracking"
@@ -302,8 +302,8 @@ graph TB
         CW[☁️ CloudWatch Service]
         
         subgraph "Log Streams"
-            LogGroup[📁 Log Group<br/>/aws/lambda/git-captain]
-            LogStream[📄 Log Streams<br/>YYYY/MM/DD/[$LATEST]requestId]
+            LogGroup["📁 Log Group<br/>/aws/lambda/git-captain"]
+            LogStream["📄 Log Streams<br/>YYYY/MM/DD/LATEST-requestId"]
         end
         
         subgraph "Metrics"
@@ -353,56 +353,6 @@ graph TB
     class ConsoleLog,ConsoleWarn,ConsoleError,ReqLog,RespLog,Duration logs
     class CW,LogGroup,LogStream,LogInsights,Alarms cloudwatch
     class Invocations,Errors,Duration2,Throttles,ColdStarts metrics
-```
-            NetMetric[🌐 Network Traffic]
-        end
-        
-        subgraph "Alarms"
-            HighCPU[🚨 High CPU Alert]
-            HighMem[🚨 Memory Alert]
-            AppError[🚨 Error Rate Alert]
-        end
-    end
-    
-    subgraph "Systems Manager"
-        SSM[⚙️ Session Manager<br/>• Remote shell access<br/>• No SSH keys needed<br/>• Session logging]
-        Inventory[📋 Inventory<br/>• Instance metadata<br/>• Installed software<br/>• Patch compliance]
-    end
-    
-    App --> AppLog
-    App --> ErrLog
-    App --> PM2Log
-    
-    AppLog --> CW
-    ErrLog --> CW
-    PM2Log --> CW
-    
-    CW --> CWApp
-    CW --> CWInit
-    CW --> CWSystem
-    CW --> CPUMetric
-    CW --> MemMetric
-    CW --> DiskMetric
-    CW --> NetMetric
-    
-    CPUMetric --> HighCPU
-    MemMetric --> HighMem
-    CWApp --> AppError
-    
-    App --> SSM
-    App --> Inventory
-    
-    classDef app fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
-    classDef logs fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-    classDef cloudwatch fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
-    classDef alerts fill:#ffebee,stroke:#d32f2f,stroke-width:2px
-    classDef ssm fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    
-    class App app
-    class AppLog,ErrLog,PM2Log logs
-    class CW,CWApp,CWInit,CWSystem,CPUMetric,MemMetric,DiskMetric,NetMetric cloudwatch
-    class HighCPU,HighMem,AppError alerts
-    class SSM,Inventory ssm
 ```
 
 ## 💰 Cost Optimization
