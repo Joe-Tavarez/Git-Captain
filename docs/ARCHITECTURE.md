@@ -13,7 +13,7 @@ Git-Captain is a modernized Node.js web application that provides a secure inter
 - **🖥️ On-Premises**: Traditional server deployment with reverse proxy
 - **🐳 Docker**: Container-based deployment (future enhancement)
 
-## 📊 Current Architecture - Monolithic Lambda
+## 📊 Current Architecture - Monolithic Lambda with Audit Logging
 
 ```mermaid
 graph TB
@@ -37,8 +37,8 @@ graph TB
                     Config[GET /config.js<br/>Client Config]
                     Token[POST /gitCaptain/getToken<br/>OAuth Token Exchange]
                     Repos[POST /gitCaptain/searchForRepos<br/>List Repositories]
-                    CreateBr[POST /gitCaptain/createBranches<br/>Create Branches]
-                    DeleteBr[DELETE /gitCaptain/deleteBranches<br/>Delete Branches]
+                    CreateBr[POST /gitCaptain/createBranches<br/>Create Branches + Audit]
+                    DeleteBr[DELETE /gitCaptain/deleteBranches<br/>Delete Branches + Audit]
                     SearchBr[POST /gitCaptain/searchForBranch<br/>Search Branch]
                     SearchPR[POST /gitCaptain/searchForPR<br/>Search Pull Request]
                     LogOff[POST /gitCaptain/logOff<br/>Revoke Token]
@@ -48,8 +48,13 @@ graph TB
             Runtime[Node.js 18.x Runtime<br/>512MB Memory<br/>30s Timeout]
         end
         
+        subgraph Storage["<b>📦 Storage & Audit</b>"]
+            S3[S3 Bucket<br/>git-captain-logs-bucket<br/>Audit Trail Storage]
+            S3Logger[Lambda: git-captain-s3-logger<br/>Python 3.9<br/>Logs S3 uploads to CloudWatch]
+        end
+        
         subgraph Services["<b>🛠️ AWS Services</b>"]
-            CW[CloudWatch Logs<br/>Function Logs]
+            CW[CloudWatch Logs<br/>Function Logs + Audit Metadata]
             Env[Environment Variables<br/>GITHUB_CLIENT_ID<br/>GITHUB_CLIENT_SECRET<br/>GITHUB_ORG_NAME<br/>NODE_ENV]
         end
     end
@@ -81,10 +86,15 @@ graph TB
     Config --> Env
     Repos --> GitHub
     CreateBr --> GitHub
+    CreateBr -->|Write audit log| S3
     DeleteBr --> GitHub
+    DeleteBr -->|Write audit log| S3
     SearchBr --> GitHub
     SearchPR --> GitHub
     LogOff --> OAuth
+    
+    S3 -->|S3 Event Trigger| S3Logger
+    S3Logger -->|Log metadata| CW
     
     Handler --> Runtime
     Runtime --> CW
