@@ -228,7 +228,7 @@ graph TB
     style Handler fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style Routes fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
     style Services fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
-    style External fill:#f1f8e9,stroke:#689f38,stroke-width:3px
+    style External fill:#e8f5e9,stroke:#689f38,stroke-width:3px
     
     style User fill:#42a5f5,stroke:#1565c0,stroke-width:2px,color:#fff
     style FunctionURL fill:#fbc02d,stroke:#f57f17,stroke-width:2px,color:#000
@@ -356,7 +356,7 @@ graph TB
     style Lambdas fill:#ffe0b2,stroke:#e65100,stroke-width:3px
     style Security fill:#ffebee,stroke:#c62828,stroke-width:2px
     style Monitoring fill:#e0f2f1,stroke:#00695c,stroke-width:2px
-    style External fill:#f1f8e9,stroke:#689f38,stroke-width:3px
+    style External fill:#e8f5e9,stroke:#689f38,stroke-width:3px
     
     style User fill:#42a5f5,stroke:#1565c0,stroke-width:2px,color:#fff
     style CF fill:#00acc1,stroke:#006064,stroke-width:2px,color:#fff
@@ -819,7 +819,7 @@ graph LR
     style Backend fill:#fff3e0,stroke:#f57c00,stroke-width:3px
     style Core fill:#fff9c4,stroke:#f57f17,stroke-width:2px
     style AWS fill:#e1f5fe,stroke:#0288d1,stroke-width:3px
-    style External fill:#f1f8e9,stroke:#689f38,stroke-width:3px
+    style External fill:#e8f5e9,stroke:#689f38,stroke-width:3px
     
     style HTML fill:#42a5f5,stroke:#1565c0,stroke-width:2px,color:#fff
     style CSS fill:#42a5f5,stroke:#1565c0,stroke-width:2px,color:#fff
