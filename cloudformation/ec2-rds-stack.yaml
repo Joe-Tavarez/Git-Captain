@@ -1,0 +1,480 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Git-Captain EC2 Auto Scaling + RDS Stack (without ALB due to account limits)'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+  
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID (use Terraform-deployed VPC)
+  
+  PublicSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public Subnet 1 ID for EC2 instances
+  
+  PublicSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public Subnet 2 ID for EC2 instances
+  
+  PrivateSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private Subnet 1 ID for RDS
+  
+  PrivateSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private Subnet 2 ID for RDS
+  
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 Key Pair for SSH access
+  
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Latest Amazon Linux 2023 AMI
+  
+  GitHubClientId:
+    Type: String
+    Description: GitHub OAuth Client ID
+    NoEcho: true
+  
+  GitHubClientSecret:
+    Type: String
+    Description: GitHub OAuth Client Secret
+    NoEcho: true
+  
+  GitHubOrgName:
+    Type: String
+    Description: GitHub Organization Name
+    Default: ConfusedDeer
+  
+  DBMasterUsername:
+    Type: String
+    Description: RDS Master Username
+    Default: gitcaptain
+    MinLength: 1
+    MaxLength: 16
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+  
+  DBMasterPassword:
+    Type: String
+    Description: RDS Master Password
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 41
+
+Mappings:
+  EnvironmentConfig:
+    dev:
+      InstanceType: t3.small
+      MinSize: 1
+      MaxSize: 3
+      DesiredCapacity: 2
+      DBInstanceClass: db.t3.micro
+    staging:
+      InstanceType: t3.medium
+      MinSize: 2
+      MaxSize: 5
+      DesiredCapacity: 3
+      DBInstanceClass: db.t3.small
+    prod:
+      InstanceType: t3.large
+      MinSize: 3
+      MaxSize: 10
+      DesiredCapacity: 5
+      DBInstanceClass: db.t3.medium
+
+Resources:
+  # ============================================
+  # SECURITY GROUPS
+  # ============================================
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${AWS::StackName}-ec2-sg'
+      GroupDescription: Security group for Git-Captain EC2 instances
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTP traffic on port 3000
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: Allow SSH access
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-ec2-sg'
+        - Key: Environment
+          Value: !Ref Environment
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${AWS::StackName}-rds-sg'
+      GroupDescription: Security group for Git-Captain RDS instance
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+          Description: Allow PostgreSQL access from EC2 instances only
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-rds-sg'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================
+  # IAM ROLES
+  # ============================================
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-ec2-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Ref GitHubSecretsSecret
+        - PolicyName: S3LogsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: arn:aws:s3:::git-captain-logs-bucket/*
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-ec2-role'
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${AWS::StackName}-ec2-profile'
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # ============================================
+  # SECRETS MANAGER
+  # ============================================
+  GitHubSecretsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${AWS::StackName}-github-secrets'
+      Description: GitHub OAuth credentials for Git-Captain
+      SecretString: !Sub |
+        {
+          "GITHUB_CLIENT_ID": "${GitHubClientId}",
+          "GITHUB_CLIENT_SECRET": "${GitHubClientSecret}",
+          "GITHUB_ORG_NAME": "${GitHubOrgName}"
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-github-secrets'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================
+  # RDS DATABASE
+  # ============================================
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub '${AWS::StackName}-db-subnet-group'
+      DBSubnetGroupDescription: Subnet group for Git-Captain RDS
+      SubnetIds:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-db-subnet-group'
+
+  PostgreSQLDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub '${AWS::StackName}-postgres'
+      DBInstanceClass: !FindInMap [EnvironmentConfig, !Ref Environment, DBInstanceClass]
+      Engine: postgres
+      EngineVersion: '15.10'
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterPassword
+      AllocatedStorage: 20
+      StorageType: gp2
+      StorageEncrypted: false
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      BackupRetentionPeriod: 0
+      MultiAZ: false
+      PubliclyAccessible: false
+      DBName: gitcaptain
+      DeletionProtection: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-postgres'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================
+  # LAUNCH TEMPLATE
+  # ============================================
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn:
+      - PostgreSQLDatabase
+      - GitHubSecretsSecret
+    Properties:
+      LaunchTemplateName: !Sub '${AWS::StackName}-launch-template'
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: !FindInMap [EnvironmentConfig, !Ref Environment, InstanceType]
+        KeyName: !Ref KeyPairName
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -e
+            exec > >(tee /var/log/user-data.log) 2>&1
+            
+            echo "Starting Git-Captain installation..."
+            
+            # Update system
+            dnf update -y
+            
+            # Install required packages
+            dnf install -y git postgresql15 jq tar gzip
+            
+            # Install Node.js 18.x using official NodeSource repository for AL2023
+            curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+            dnf install -y nodejs
+            
+            # Install PM2 globally
+            npm install -g pm2
+            
+            # Create application directory
+            mkdir -p /opt/git-captain
+            cd /opt/git-captain
+            
+            # Clone Git-Captain repository
+            git clone https://github.com/Joe-Tavarez/Git-Captain.git .
+            
+            # Install dependencies
+            npm install --production
+            
+            # Get secrets from Secrets Manager
+            SECRET_JSON=$(aws secretsmanager get-secret-value \
+              --secret-id ${GitHubSecretsSecret} \
+              --region ${AWS::Region} \
+              --query SecretString \
+              --output text)
+            
+            # Extract values from secret
+            GITHUB_CLIENT_ID=$(echo $SECRET_JSON | jq -r .GITHUB_CLIENT_ID)
+            GITHUB_CLIENT_SECRET=$(echo $SECRET_JSON | jq -r .GITHUB_CLIENT_SECRET)
+            GITHUB_ORG_NAME=$(echo $SECRET_JSON | jq -r .GITHUB_ORG_NAME)
+            
+            # Create .env file
+            cat > /opt/git-captain/.env << EOF
+            NODE_ENV=production
+            HTTPS_PORT=3000
+            GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID
+            GITHUB_CLIENT_SECRET=$GITHUB_CLIENT_SECRET
+            GITHUB_ORG_NAME=$GITHUB_ORG_NAME
+            DB_HOST=${PostgreSQLDatabase.Endpoint.Address}
+            DB_PORT=5432
+            DB_NAME=gitcaptain
+            DB_USER=${DBMasterUsername}
+            DB_PASSWORD=${DBMasterPassword}
+            S3_BUCKET=git-captain-logs-bucket
+            AWS_REGION=${AWS::Region}
+            EOF
+            
+            # Set permissions
+            chown -R ec2-user:ec2-user /opt/git-captain
+            chmod 600 /opt/git-captain/.env
+            
+            # Start application with PM2
+            su - ec2-user -c "cd /opt/git-captain && pm2 start controllers/server.js --name git-captain"
+            su - ec2-user -c "pm2 save"
+            su - ec2-user -c "pm2 startup systemd -u ec2-user --hp /home/ec2-user"
+            
+            # Configure PM2 to start on boot
+            env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u ec2-user --hp /home/ec2-user
+            
+            echo "Git-Captain installation completed!"
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub '${AWS::StackName}-instance'
+              - Key: Environment
+                Value: !Ref Environment
+              - Key: Project
+                Value: Git-Captain
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: !Sub '${AWS::StackName}-volume'
+              - Key: Environment
+                Value: !Ref Environment
+
+  # ============================================
+  # AUTO SCALING GROUP
+  # ============================================
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub '${AWS::StackName}-asg'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: !FindInMap [EnvironmentConfig, !Ref Environment, MinSize]
+      MaxSize: !FindInMap [EnvironmentConfig, !Ref Environment, MaxSize]
+      DesiredCapacity: !FindInMap [EnvironmentConfig, !Ref Environment, DesiredCapacity]
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1Id
+        - !Ref PublicSubnet2Id
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 300
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-asg-instance'
+          PropagateAtLaunch: true
+        - Key: Environment
+          Value: !Ref Environment
+          PropagateAtLaunch: true
+        - Key: Project
+          Value: Git-Captain
+          PropagateAtLaunch: true
+
+  # ============================================
+  # AUTO SCALING POLICIES
+  # ============================================
+  ScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 70.0
+
+Outputs:
+  StackName:
+    Description: Stack Name
+    Value: !Ref AWS::StackName
+    Export:
+      Name: !Sub '${AWS::StackName}-StackName'
+  
+  Environment:
+    Description: Environment
+    Value: !Ref Environment
+    Export:
+      Name: !Sub '${AWS::StackName}-Environment'
+  
+  AutoScalingGroupName:
+    Description: Auto Scaling Group Name
+    Value: !Ref AutoScalingGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-ASG'
+  
+  LaunchTemplateId:
+    Description: Launch Template ID
+    Value: !Ref LaunchTemplate
+    Export:
+      Name: !Sub '${AWS::StackName}-LaunchTemplate'
+  
+  EC2SecurityGroupId:
+    Description: EC2 Security Group ID
+    Value: !Ref EC2SecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-EC2-SG'
+  
+  RDSSecurityGroupId:
+    Description: RDS Security Group ID
+    Value: !Ref RDSSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-RDS-SG'
+  
+  RDSEndpoint:
+    Description: RDS PostgreSQL Endpoint
+    Value: !GetAtt PostgreSQLDatabase.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-RDS-Endpoint'
+  
+  RDSPort:
+    Description: RDS PostgreSQL Port
+    Value: !GetAtt PostgreSQLDatabase.Endpoint.Port
+    Export:
+      Name: !Sub '${AWS::StackName}-RDS-Port'
+  
+  DatabaseName:
+    Description: Database Name
+    Value: gitcaptain
+    Export:
+      Name: !Sub '${AWS::StackName}-DB-Name'
+  
+  GitHubSecretsArn:
+    Description: GitHub Secrets ARN in Secrets Manager
+    Value: !Ref GitHubSecretsSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-GitHub-Secrets'
+  
+  ApplicationNote:
+    Description: How to access the application
+    Value: !Sub |
+      Note: Without ALB (due to AWS account limits), access EC2 instances directly via their public IPs on port 3000.
+      Use AWS Console to find instance public IPs: EC2 > Instances > ${AWS::StackName}-asg-instance
+      Example: http://<INSTANCE-PUBLIC-IP>:3000
+  
+  ComponentsSummary:
+    Description: Deployed components summary
+    Value: |
+      ✓ EC2 Auto Scaling Group (2-3 instances)
+      ✓ RDS PostgreSQL Database (Multi-AZ capable)
+      ✓ Secrets Manager (GitHub OAuth)
+      ✓ CloudWatch Logs & Monitoring
+      ✓ Security Groups (EC2 + RDS)
+      ✓ IAM Roles & Instance Profiles
+      ⚠ ALB excluded (AWS account service limits)

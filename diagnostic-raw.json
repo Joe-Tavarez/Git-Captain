@@ -1,0 +1,14 @@
+﻿{
+    "CommandId": "e0dc548e-a840-4c3b-973c-074909227ce3",
+    "InstanceId": "i-02c84ed1dd450b8eb",
+    "Comment": "",
+    "DocumentName": "AWS-RunShellScript",
+    "DocumentVersion": "$DEFAULT",
+    "PluginName": "aws:runShellScript",
+    "ResponseCode": 0,
+    "ExecutionStartDateTime": "2025-12-07T19:57:23.337Z",
+    "ExecutionElapsedTime": "PT0.612S",
+    "ExecutionEndDateTime": "2025-12-07T19:57:23.337Z",
+    "Status": "Success",
+    "StatusDetails": "Success",
+    "StandardOutputContent": 

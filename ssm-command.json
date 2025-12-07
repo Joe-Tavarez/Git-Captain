@@ -1,0 +1,8 @@
+{
+  "commands": [
+    "pm2 list",
+    "node --version",
+    "ls -la /opt/git-captain",
+    "tail -20 /var/log/user-data.log"
+  ]
+}
