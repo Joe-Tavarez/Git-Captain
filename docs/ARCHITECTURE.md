@@ -4,19 +4,42 @@
 
 Git-Captain is a modernized Node.js web application that provides a secure interface for GitHub repository management with OAuth authentication and comprehensive security middleware.
 
-**🌐 Current Deployment**: Git-Captain is deployed as a serverless microservices application on AWS using Lambda functions, API Gateway, S3, and CloudFront. The application supports both serverless (Lambda) and traditional (EC2) deployment models.
+**🌐 Current Deployment**: Git-Captain is currently deployed as a monolithic serverless application on AWS Lambda with Function URL, featuring S3 audit logging. A microservices architecture with API Gateway is planned for future enhancement.
 
 ### Deployment Evolution
 1. **v1.0** - Traditional on-premises Node.js server
 2. **v2.0** - AWS EC2 with VPC, ALB, and enhanced security
-3. **v2.1** - AWS Lambda monolithic with Function URL and S3 audit logging
-4. **v2.2** (Current) - AWS Lambda microservices with API Gateway, S3, and CloudFront CDN
+3. **v2.1** (Current) - AWS Lambda monolithic with Function URL and S3 audit logging
+4. **v2.2** (Planned) - AWS Lambda microservices with API Gateway, S3, and CloudFront CDN
 
 See [AWS Architecture Documentation](./aws/AWS_ARCHITECTURE.md) for detailed cloud deployment information.
 
 ## 📍 Deployment Options
 
-### ☁️ AWS Lambda Microservices (Current - Recommended)
+### ☁️ AWS Lambda Monolithic (Current)
+**Single Lambda function with Function URL**
+
+**Architecture Components**:
+- **Single Lambda**: git-captain (Express app via serverless-http)
+- **Function URL**: Public HTTPS endpoint with CORS
+- **S3 Bucket**: Audit log storage (git-captain-logs-bucket)
+- **S3 Logger Lambda**: Python function for S3 event processing
+- **Environment Variables**: Client ID, secret, org name
+
+**Benefits**:
+- ✅ Simplest Lambda deployment
+- ✅ No API Gateway costs
+- ✅ Direct function invocation
+- ✅ Audit logging to S3
+
+**Limitations**:
+- ⚠️ Limited routing flexibility
+- ⚠️ All routes in single function
+- ⚠️ Less granular scaling
+
+---
+
+### ☁️ AWS Lambda Microservices (Planned)
 **Serverless architecture with API Gateway, S3, and CloudFront**
 
 **Architecture Components**:
@@ -39,23 +62,15 @@ sam build && sam deploy --guided
 - ✅ Minimal operational maintenance
 - ✅ Global CDN distribution
 - ✅ Automatic SSL/TLS via CloudFront
+- ✅ Independent function scaling
+- ✅ Better separation of concerns
 
 **Best For**: Variable traffic, cost optimization, rapid scaling, minimal ops overhead
 
 ---
 
-### ☁️ AWS Lambda Monolithic (Previous)
-**Single Lambda function with Function URL**
-
-**Architecture Components**:
-- **Single Lambda**: git-captain (Express app via serverless-http)
-- **Function URL**: Public HTTPS endpoint with CORS
-- **S3 Bucket**: Audit log storage (git-captain-logs-bucket)
-- **S3 Logger Lambda**: Python function for S3 event processing
-- **Environment Variables**: Client ID, secret, org name
-
-**Benefits**:
-- ✅ Simplest Lambda deployment
+### ☁️ AWS EC2 with VPC (Legacy)
+**Traditional server deployment with comprehensive AWS infrastructure**
 - ✅ No API Gateway costs
 - ✅ Direct function invocation
 - ✅ Audit logging to S3
@@ -239,7 +254,7 @@ graph TB
     style LogOff fill:#2196f3,stroke:#0d47a1,stroke-width:1px,color:#fff
 ```
 
-## 🎯 Lambda Microservices Architecture (Current Implementation)
+## 🎯 Lambda Microservices Architecture (Future/Planned)
 
 ```mermaid
 graph TB
@@ -261,23 +276,23 @@ graph TB
             API[git-captain-api<br/>Stage: prod<br/>CORS Enabled<br/>Custom Error Responses]
             
             subgraph Routes["<b>🛤️ API Routes</b>"]
-                R1[GET /health]
-                R2[GET /gitCaptain/getToken]
-                R3[GET /gitCaptain/checkGitHubStatus]
-                R4[GET /gitCaptain/checkGitCaptainStatus]
-                R5[POST /{appName}/{webServ}]
-                R6[DELETE /{appName}/{webServ}]
+                R1["GET /health"]
+                R2["GET /gitCaptain/getToken"]
+                R3["GET /gitCaptain/checkGitHubStatus"]
+                R4["GET /gitCaptain/checkGitCaptainStatus"]
+                R5["POST /appName/webServ"]
+                R6["DELETE /appName/webServ"]
             end
         end
         
         subgraph Lambdas["<b>⚡ Lambda Functions</b>"]
-            HealthLambda[🏥 health-check<br/>Handler: health.handler<br/>Health monitoring<br/>Uptime & memory stats<br/>Node.js 18.x | 512MB | 30s]
+            HealthLambda["🏥 health-check<br/>Handler: health.handler<br/>Health monitoring<br/>Uptime & memory stats<br/>Node.js 18.x • 512MB • 30s"]
             
-            OAuthLambda[🔐 github-oauth<br/>Handler: oauth.handler<br/>OAuth token exchange<br/>Secrets Manager integration<br/>Node.js 18.x | 512MB | 30s]
+            OAuthLambda["🔐 github-oauth<br/>Handler: oauth.handler<br/>OAuth token exchange<br/>Secrets Manager integration<br/>Node.js 18.x • 512MB • 30s"]
             
-            StatusLambda[📊 github-status<br/>Handler: status.handler<br/>GitHub API status<br/>Service health checks<br/>Node.js 18.x | 512MB | 30s]
+            StatusLambda["📊 github-status<br/>Handler: status.handler<br/>GitHub API status<br/>Service health checks<br/>Node.js 18.x • 512MB • 30s"]
             
-            BranchLambda[🌿 branch-operations<br/>Handler: branches.handler<br/>All branch operations<br/>Repo search & PR queries<br/>Token revocation<br/>Node.js 18.x | 512MB | 30s]
+            BranchLambda["🌿 branch-operations<br/>Handler: branches.handler<br/>All branch operations<br/>Repo search & PR queries<br/>Token revocation<br/>Node.js 18.x • 512MB • 30s"]
         end
         
         subgraph Security["<b>🔐 Security & Configuration</b>"]
