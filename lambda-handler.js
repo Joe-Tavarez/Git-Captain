@@ -8,8 +8,10 @@ const serverless = require('serverless-http');
 const express = require('express');
 const path = require('path');
 const bodyParser = require('body-parser');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
 const app = express();
+const s3Client = new S3Client({ region: 'us-east-2' });
 
 // Simple configuration from environment
 const config = {
@@ -19,8 +21,60 @@ const config = {
         client_id: process.env.GITHUB_CLIENT_ID || '',
         client_secret: process.env.GITHUB_CLIENT_SECRET || '',
         orgName: process.env.GITHUB_ORG_NAME || 'ConfusedDeer'
+    },
+    s3: {
+        auditBucket: 'git-captain-logs-bucket',
+        auditPrefix: 'audit/'
     }
 };
+
+/**
+ * Log branch operations to S3 for audit trail
+ * @param {string} operation - Type of operation (create_branch, delete_branch)
+ * @param {string} user - User identifier (from token or IP)
+ * @param {string} repo - Repository name
+ * @param {string} branch - Branch name
+ * @param {object} metadata - Additional metadata
+ */
+async function logAuditTrail(operation, user, repo, branch, metadata = {}) {
+    try {
+        const timestamp = new Date().toISOString();
+        const auditLog = {
+            operation,
+            user,
+            repository: repo,
+            branch,
+            organization: config.gitHub.orgName,
+            timestamp,
+            metadata,
+            source: 'git-captain-lambda'
+        };
+
+        const key = `${config.s3.auditPrefix}${operation}/${timestamp}-${repo}-${branch}.json`;
+        
+        const command = new PutObjectCommand({
+            Bucket: config.s3.auditBucket,
+            Key: key,
+            Body: JSON.stringify(auditLog, null, 2),
+            ContentType: 'application/json',
+            Metadata: {
+                operation,
+                repository: repo,
+                branch,
+                timestamp
+            }
+        });
+
+        await s3Client.send(command);
+
+        console.log(`Audit log saved to S3: ${key}`);
+        return true;
+    } catch (error) {
+        console.error('Failed to save audit log to S3:', error.message);
+        // Don't fail the operation if audit logging fails
+        return false;
+    }
+}
 
 let authCode;
 
@@ -231,9 +285,37 @@ app.post('/gitCaptain/createBranches', async (req, res) => {
 
         try {
             const result = await makeGitHubRequest(createUrl, token, 'POST', createData);
+            
+            // Log audit trail to S3
+            await logAuditTrail(
+                'create_branch',
+                req.ip || 'unknown',
+                repo,
+                newBranch,
+                {
+                    source_branch: branchRef,
+                    sha: refData.object.sha,
+                    success: true,
+                    status_code: 201
+                }
+            );
+            
             res.json({ statusCode: 201, body: JSON.stringify(result) });
         } catch (error) {
             if (error.response?.status === 422) {
+                // Log failed attempt
+                await logAuditTrail(
+                    'create_branch',
+                    req.ip || 'unknown',
+                    repo,
+                    newBranch,
+                    {
+                        source_branch: branchRef,
+                        success: false,
+                        status_code: 422,
+                        error: 'Branch already exists'
+                    }
+                );
                 res.json({ statusCode: 422, message: 'Branch already exists' });
             } else {
                 throw error;
@@ -326,8 +408,35 @@ app.delete('/gitCaptain/deleteBranches', async (req, res) => {
         
         try {
             await makeGitHubRequest(deleteUrl, token, 'DELETE');
+            
+            // Log successful deletion to S3
+            await logAuditTrail(
+                'delete_branch',
+                req.ip || 'unknown',
+                repo,
+                deleteBranch,
+                {
+                    success: true,
+                    status_code: 204,
+                    message: 'Branch deleted successfully'
+                }
+            );
+            
             res.json({ statusCode: 204, message: 'Branch deleted successfully' });
         } catch (error) {
+            // Log failed deletion attempt
+            await logAuditTrail(
+                'delete_branch',
+                req.ip || 'unknown',
+                repo,
+                deleteBranch,
+                {
+                    success: false,
+                    status_code: error.response?.status || 500,
+                    error: error.message
+                }
+            );
+            
             res.json({ 
                 statusCode: error.response?.status || 500, 
                 error: 'Failed to delete branch' 
@@ -356,8 +465,37 @@ app.post('/gitCaptain/deleteBranch', async (req, res) => {
         
         try {
             await makeGitHubRequest(deleteUrl, token, 'DELETE');
+            
+            // Log successful deletion to S3
+            await logAuditTrail(
+                'delete_branch',
+                req.ip || 'unknown',
+                repo,
+                deleteBranch,
+                {
+                    success: true,
+                    status_code: 204,
+                    message: 'Branch deleted successfully',
+                    endpoint: 'POST /gitCaptain/deleteBranch'
+                }
+            );
+            
             res.json({ statusCode: 204, message: 'Branch deleted successfully' });
         } catch (error) {
+            // Log failed deletion attempt
+            await logAuditTrail(
+                'delete_branch',
+                req.ip || 'unknown',
+                repo,
+                deleteBranch,
+                {
+                    success: false,
+                    status_code: error.response?.status || 500,
+                    error: error.message,
+                    endpoint: 'POST /gitCaptain/deleteBranch'
+                }
+            );
+            
             res.json({ 
                 statusCode: error.response?.status || 500, 
                 error: 'Failed to delete branch' 

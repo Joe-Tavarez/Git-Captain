@@ -1,0 +1,9 @@
+{
+  "LambdaFunctionConfigurations": [
+    {
+      "Id": "S3UploadLogger",
+      "LambdaFunctionArn": "arn:aws:lambda:us-east-2:428207760450:function:git-captain-s3-logger",
+      "Events": ["s3:ObjectCreated:*"]
+    }
+  ]
+}
